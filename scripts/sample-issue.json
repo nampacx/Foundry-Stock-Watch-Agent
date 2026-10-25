@@ -1,0 +1,11 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 1,
+    "title": "Agent crashes when the issue body is empty",
+    "body": "Steps: open an issue with no description.\nExpected: the triage agent answers.\nActual: it throws a NullReferenceException.",
+    "user": { "login": "octocat" },
+    "labels": []
+  },
+  "repository": { "full_name": "nampacx/Foundry-GH-Triage-Agent" }
+}
