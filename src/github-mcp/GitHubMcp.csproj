@@ -8,7 +8,7 @@
     <AssemblyName>GitHubMcp</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UserSecretsId>fba44b65-0b34-483b-9eb4-4a077b6889ed</UserSecretsId>
+    <UserSecretsId>66ebfafc-ee54-4bb3-941f-ed5321c22ff0</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
