@@ -1,8 +1,8 @@
 #!/bin/sh
-# azd postprovision hook: creates the two GitHub connections and the toolbox.
-#   github-conn : GitHub connector the routine's github_issue trigger uses (OAuth2)
-#   github-mcp  : Foundry-managed GitHub MCP server (OAuth2) the agent reads code with
-# Both need a one-time interactive GitHub consent, so this hook is interactive.
+# azd postprovision hook: creates the GitHub connections and the toolbox.
+#   github-conn     : GitHub connector the routine's github_issue trigger uses (OAuth2, one-time consent)
+#   github-rest-mcp : our own MCP server (Azure Function wrapping the GitHub REST API, PAT in Key Vault)
+#                     the agent reads code with; see scripts/deploy-github-mcp.sh
 # The routine itself is created later by `azd deploy` (service "on-issue-opened").
 set -eu
 cd "$(dirname "$0")/.."
@@ -29,13 +29,15 @@ wait_for_consent() {
   return 1
 }
 
-for pair in "github-conn:github" "github-mcp:foundrygithubmcp"; do
+for pair in "github-conn:github"; do
   name="${pair%%:*}"
   connector="${pair##*:}"
   echo "Creating connection '$name' (connector '$connector')..."
   azd ai connection create "$name" --connector-name "$connector" --force
   wait_for_consent "$name"
 done
+
+./scripts/deploy-github-mcp.sh
 
 if azd ai toolbox show gh-triage-tools >/dev/null 2>&1; then
   echo "Toolbox 'gh-triage-tools' already exists, skipping."

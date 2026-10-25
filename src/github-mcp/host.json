@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": { "isEnabled": true, "excludedTypes": "Request" }
+    }
+  },
+  "extensions": {
+    "mcp": {
+      "serverName": "github-rest-mcp",
+      "serverVersion": "1.0.0",
+      "instructions": "Read-only GitHub repository tools (REST API, authenticated with a server-side PAT)."
+    }
+  }
+}
