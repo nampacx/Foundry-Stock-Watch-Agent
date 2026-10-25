@@ -1,0 +1,6 @@
+# Toolbox exposing the Foundry-managed GitHub MCP server (OAuth2 connection "github-mcp")
+# as one MCP endpoint: {project}/toolboxes/gh-triage-tools/mcp
+name: gh-triage-tools
+description: Read-only GitHub repository tools for bug triage
+connections:
+  - name: github-mcp

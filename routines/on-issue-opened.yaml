@@ -1,0 +1,18 @@
+# Foundry routine: GitHub "issue opened" -> hosted triage agent.
+# The GitHub issue payload replaces `action.input` when the event fires; the input below is only
+# used for manual test dispatches (`azd ai routine dispatch`).
+# Change owner/repository to watch a different repo.
+name: on-issue-opened
+description: Triages a GitHub issue when it is opened in the watched repository.
+enabled: true
+triggers:
+  on-issue:
+    type: github_issue
+    connectionId: github-conn
+    owner: nampacx
+    repository: Foundry-GH-Triage-Agent
+    issueEvent: opened
+action:
+  type: invoke_agent_responses_api
+  agentName: triage-agent
+  input: Triage this GitHub issue.

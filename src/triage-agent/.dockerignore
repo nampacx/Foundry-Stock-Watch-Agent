@@ -1,0 +1,8 @@
+.env
+.env.*
+.azure/
+.git/
+bin/
+obj/
+*.user
+.vs/

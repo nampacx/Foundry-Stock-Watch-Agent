@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  azd: '>=1.27.1'
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.16'
+    azure.ai.connections: '>=1.0.0-beta.10'
+    azure.ai.toolboxes: '>=1.0.0-beta.11'
+    azure.ai.routines: '>=1.0.0-beta.10'
+name: foundry-gh-triage-agent
+
+services:
+  # Foundry account + project + model deployment. Created by `azd provision`
+  # (infra.provider: microsoft.foundry), no hand-written Bicep needed.
+  ai-project:
+    host: azure.ai.project
+    deployments:
+      # Default: MAI-Thinking-1 (preview). Chat Completions only, Global Standard.
+      # NOTE: the default quota tier is 0 TPM; request quota before `azd provision`.
+      - name: MAI-Thinking-1
+        model:
+          format: Microsoft
+          name: MAI-Thinking-1
+          version: '2026-06-01'
+        sku:
+          name: GlobalStandard
+          capacity: 1
+      # Fallback if MAI-Thinking-1 quota/availability is a problem:
+      #   1. replace the deployment above with this one
+      #   2. set AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna and MODEL_API: responses below
+      # - name: gpt-6-luna
+      #   model:
+      #     format: OpenAI
+      #     name: gpt-6-luna
+      #     version: '2026-09-22'
+      #   sku:
+      #     name: GlobalStandard
+      #     capacity: 10
+
+  # The hosted triage agent (C#, Microsoft Agent Framework, Responses protocol).
+  triage-agent:
+    host: azure.ai.agent
+    project: src/triage-agent
+    language: docker
+    docker:
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: triage-agent
+    description: Triages new GitHub issues by reading the repository code through the Foundry-managed GitHub MCP toolbox.
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    env:
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: MAI-Thinking-1
+      # chat      = Chat Completions via {account}/mai/v1 (MAI-Thinking-1)
+      # responses = Foundry Responses API (gpt-* models)
+      MODEL_API: chat
+      TOOLBOX_NAME: gh-triage-tools
+      GITHUB_OWNER: nampacx
+      GITHUB_REPOSITORY: Foundry-GH-Triage-Agent
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
+  # The routine: GitHub "issue opened" -> triage-agent. Created by `azd deploy` after the agent.
+  # Depends on the "github-conn" connection created by the postprovision hook.
+  on-issue-opened:
+    host: azure.ai.routine
+    uses:
+      - triage-agent
+    $ref: ./routines/on-issue-opened.yaml
+
+infra:
+  provider: microsoft.foundry
+
+hooks:
+  # After the Foundry project exists: create the GitHub connections + toolbox
+  # (needs a one-time interactive GitHub OAuth consent). The routine itself is a
+  # service (see below) so it is created by `azd deploy` once the agent is live.
+  postprovision:
+    windows:
+      shell: pwsh
+      run: ./scripts/setup-connections.ps1
+      interactive: true
+    posix:
+      shell: sh
+      run: ./scripts/setup-connections.sh
+      interactive: true
