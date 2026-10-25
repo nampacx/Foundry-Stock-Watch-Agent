@@ -48,7 +48,7 @@ services:
       - ai-project
     kind: hosted
     name: triage-agent
-    description: Triages new GitHub issues by reading the repository code through the Foundry-managed GitHub MCP toolbox.
+    description: Triages new GitHub issues by reading the repository code through a toolbox backed by our own GitHub REST MCP server (PAT in Key Vault).
     protocols:
       - protocol: responses
         version: 2.0.0
