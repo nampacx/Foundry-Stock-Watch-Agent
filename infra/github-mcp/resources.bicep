@@ -1,24 +1,27 @@
 // GitHub REST -> MCP wrapper: Function App (Flex Consumption, .NET 10 isolated) + Key Vault holding the PAT.
 // The app's system-assigned identity reads the secret through a Key Vault reference; no secret is in the template.
+// The secret itself (github-pat) is written by the layer's postprovision hook, never via template parameters.
 targetScope = 'resourceGroup'
 
-@description('Base name; a unique suffix is appended.')
-param baseName string = 'ghmcp'
-param location string = resourceGroup().location
+param location string
+@description('Unique, deterministic token used in resource names.')
+param resourceToken string
+param tags object = {}
 
 @description('Object id of the person/pipeline that stores the PAT (gets Key Vault Secrets Officer). Optional.')
 param secretsOfficerPrincipalId string = ''
+param secretsOfficerPrincipalType string = 'User'
 
-var suffix = take(uniqueString(resourceGroup().id, baseName), 6)
-var funcName = '${baseName}-${suffix}'
-var kvName = take('kv-${baseName}-${suffix}', 24)
-var storageName = take('st${baseName}${suffix}', 24)
+var funcName = 'func-ghmcp-${resourceToken}'
+var kvName = 'kv-ghmcp-${take(resourceToken, 8)}'
+var storageName = 'stghmcp${take(resourceToken, 10)}'
 var deployContainer = 'app-package'
-var patSecretName = 'github-pat'
+var patSecretName = 'github-pat' // written by scripts/store-github-pat.*
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
   location: location
+  tags: tags
   sku: { name: 'Standard_LRS' }
   kind: 'StorageV2'
   properties: {
@@ -37,6 +40,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 resource kv 'Microsoft.KeyVault/vaults@2024-11-01' = {
   name: kvName
   location: location
+  tags: tags
   properties: {
     sku: { family: 'A', name: 'standard' }
     tenantId: subscription().tenantId
@@ -49,12 +53,14 @@ resource kv 'Microsoft.KeyVault/vaults@2024-11-01' = {
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${funcName}'
   location: location
+  tags: tags
   properties: { sku: { name: 'PerGB2018' }, retentionInDays: 30 }
 }
 
 resource appi 'Microsoft.Insights/components@2020-02-02' = {
   name: 'appi-${funcName}'
   location: location
+  tags: tags
   kind: 'web'
   properties: { Application_Type: 'web', WorkspaceResourceId: logs.id }
 }
@@ -62,6 +68,7 @@ resource appi 'Microsoft.Insights/components@2020-02-02' = {
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: 'plan-${funcName}'
   location: location
+  tags: tags
   kind: 'functionapp'
   sku: { name: 'FC1', tier: 'FlexConsumption' }
   properties: { reserved: true }
@@ -70,6 +77,8 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 resource func 'Microsoft.Web/sites@2024-04-01' = {
   name: funcName
   location: location
+  // azd matches the azure.yaml service 'github-mcp' to this resource by this tag.
+  tags: union(tags, { 'azd-service-name': 'github-mcp' })
   kind: 'functionapp,linux'
   identity: { type: 'SystemAssigned' }
   properties: {
@@ -85,7 +94,7 @@ resource func 'Microsoft.Web/sites@2024-04-01' = {
         }
       }
       scaleAndConcurrency: { maximumInstanceCount: 40, instanceMemoryMB: 2048 }
-      runtime: { name: 'dotnet-isolated', version: '10.0' }
+      runtime: { name: 'dotnet-isolated', version: '10' }
     }
     siteConfig: {
       appSettings: [
@@ -130,6 +139,7 @@ resource officer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!emp
   name: guid(kv.id, secretsOfficerPrincipalId, roles.kvSecretsOfficer)
   properties: {
     principalId: secretsOfficerPrincipalId
+    principalType: secretsOfficerPrincipalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.kvSecretsOfficer)
   }
 }

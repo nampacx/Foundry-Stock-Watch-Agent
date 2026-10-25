@@ -11,7 +11,7 @@ name: foundry-gh-triage-agent
 
 services:
   # Foundry account + project + model deployment. Created by `azd provision`
-  # (infra.provider: microsoft.foundry), no hand-written Bicep needed.
+  # (the "foundry" layer, provider microsoft.foundry), no hand-written Bicep needed.
   ai-project:
     host: azure.ai.project
     deployments:
@@ -37,6 +37,24 @@ services:
       #     name: GlobalStandard
       #     capacity: 10
 
+  # GitHub REST -> MCP server on Azure Functions (Flex Consumption). Provisioned by the github-mcp layer
+  # (the resource is matched by name through the outputs below), code deployed by `azd deploy`.
+  # Deployed before triage-agent (which `uses` it): the postdeploy hook wires the Foundry connection + toolbox.
+  github-mcp:
+    project: src/github-mcp
+    language: dotnet
+    host: function
+    resourceGroup: ${GITHUB_MCP_RESOURCE_GROUP}
+    resourceName: ${GITHUB_MCP_FUNCTION_NAME}
+    hooks:
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: ./scripts/register-github-mcp.ps1
+        posix:
+          shell: sh
+          run: ./scripts/register-github-mcp.sh
+
   # The hosted triage agent (C#, Microsoft Agent Framework, Responses protocol).
   triage-agent:
     host: azure.ai.agent
@@ -46,6 +64,7 @@ services:
       remoteBuild: true
     uses:
       - ai-project
+      - github-mcp
     kind: hosted
     name: triage-agent
     description: Triages new GitHub issues by reading the repository code through a toolbox backed by our own GitHub REST MCP server (PAT in Key Vault).
@@ -66,26 +85,44 @@ services:
         memory: 1Gi
 
   # The routine: GitHub "issue opened" -> triage-agent. Created by `azd deploy` after the agent.
-  # Depends on the "github-conn" connection created by the postprovision hook.
+  # Depends on the "github-conn" connection created by the foundry layer's postprovision hook.
   on-issue-opened:
     host: azure.ai.routine
     uses:
       - triage-agent
     $ref: ./routines/on-issue-opened.yaml
 
+# Two provisioning layers (azd layered provisioning, beta):
+#   foundry    : Foundry account/project/model, synthesized by the microsoft.foundry provider from the
+#                services above; its hook creates the routine's GitHub OAuth connector (one-time consent).
+#   github-mcp : own Bicep (infra/github-mcp): resource group, Function App for the GitHub REST MCP
+#                server, Key Vault for the PAT. Its hook stores the PAT in Key Vault.
+# `azd down` removes both layers (reverse order); use `azd down --purge` to also purge the soft-deleted vault.
 infra:
-  provider: microsoft.foundry
-
-hooks:
-  # After the Foundry project exists: create the GitHub connections + toolbox
-  # (needs a one-time interactive GitHub OAuth consent). The routine itself is a
-  # service (see below) so it is created by `azd deploy` once the agent is live.
-  postprovision:
-    windows:
-      shell: pwsh
-      run: ./scripts/setup-connections.ps1
-      interactive: true
-    posix:
-      shell: sh
-      run: ./scripts/setup-connections.sh
-      interactive: true
+  layers:
+    - name: foundry
+      provider: microsoft.foundry
+      path: infra/foundry
+      hooks:
+        postprovision:
+          windows:
+            shell: pwsh
+            run: ./scripts/setup-connections.ps1
+            interactive: true
+          posix:
+            shell: sh
+            run: ./scripts/setup-connections.sh
+            interactive: true
+    - name: github-mcp
+      provider: bicep
+      path: infra/github-mcp
+      hooks:
+        postprovision:
+          windows:
+            shell: pwsh
+            run: ./scripts/store-github-pat.ps1
+            interactive: true
+          posix:
+            shell: sh
+            run: ./scripts/store-github-pat.sh
+            interactive: true
