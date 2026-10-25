@@ -1,4 +1,5 @@
 using GitHubMcp;
+using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -6,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.Services.AddApplicationInsightsTelemetryWorkerService();
-builder.ConfigureFunctionsApplicationInsights();
+builder.Services.ConfigureFunctionsApplicationInsights();
 
 // GITHUB_PAT is an app setting. In Azure it is a Key Vault reference
 // (@Microsoft.KeyVault(SecretUri=...)) resolved by the platform with the app's managed identity,
