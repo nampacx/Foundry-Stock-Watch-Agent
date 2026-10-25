@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -8,6 +8,7 @@
     <AssemblyName>GitHubMcp</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UserSecretsId>fba44b65-0b34-483b-9eb4-4a077b6889ed</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
