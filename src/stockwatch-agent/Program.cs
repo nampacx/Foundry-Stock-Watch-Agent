@@ -9,10 +9,14 @@ using Azure.Core;
 using Azure.Data.Tables;
 using Azure.Identity;
 using Azure.Storage.Blobs;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using StockWatchAgent;
 
 // Local development only; in Foundry the platform injects the environment.
@@ -41,6 +45,7 @@ IChatClient chatClient = new AIProjectClient(new Uri(projectEndpoint), credentia
     // The Responses API requires "model" on every request; the project client does not add it by itself.
     .AsBuilder()
     .ConfigureOptions(o => o.ModelId ??= deployment)
+    .UseOpenTelemetry(sourceName: Telemetry.Name)
     .Build();
 
 var runner = new ReviewRunner(companies, new AnalystResearcher(chatClient), reports, maxParallel);
@@ -61,6 +66,16 @@ AIAgent agent = chatClient.AsAIAgent(
     tools: [reviewTool]);
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Telemetry to Application Insights: agent/model spans (gen_ai.*), the custom spans and metrics from Telemetry,
+// plus ASP.NET Core and HTTP client signals. Skipped locally when no connection string is set.
+if (Config.Optional("APPLICATIONINSIGHTS_CONNECTION_STRING", null) is not null)
+{
+    builder.Services.AddOpenTelemetry()
+        .UseAzureMonitor()
+        .WithTracing(t => t.AddSource(Telemetry.Name, "Microsoft.Agents.AI*"))
+        .WithMetrics(m => m.AddMeter(Telemetry.Name));
+}
 builder.Services.AddFoundryResponses(agent);
 
 var app = builder.Build();

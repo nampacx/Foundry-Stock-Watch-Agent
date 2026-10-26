@@ -64,3 +64,5 @@ output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = resources.outputs.AZURE_AI_
 output STORAGE_ACCOUNT_NAME string = resources.outputs.STORAGE_ACCOUNT_NAME
 output WATCHLIST_TABLE string = resources.outputs.WATCHLIST_TABLE
 output REPORTS_CONTAINER string = resources.outputs.REPORTS_CONTAINER
+#disable-next-line outputs-should-not-contain-secrets
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.APPLICATIONINSIGHTS_CONNECTION_STRING

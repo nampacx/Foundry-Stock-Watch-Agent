@@ -248,4 +248,7 @@ output AZURE_CONTAINER_REGISTRY_ENDPOINT string = registry.properties.loginServe
 output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = registry.id
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = foundryAccount::project::acrConnection.name
 output APPLICATIONINSIGHTS_NAME string = appi.name
+// Ingestion settings, not a data-plane credential; the hosted agent needs it to export telemetry.
+#disable-next-line outputs-should-not-contain-secrets
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = appi.properties.ConnectionString
 output AZURE_AI_PROJECT_APPINSIGHTS_CONNECTION_NAME string = foundryAccount::project::appInsightsConnection.name

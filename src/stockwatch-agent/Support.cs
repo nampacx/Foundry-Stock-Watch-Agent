@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
@@ -18,6 +20,20 @@ internal static class Config
         string? value = Environment.GetEnvironmentVariable(name);
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
+}
+
+/// <summary>Custom OpenTelemetry signals; exported to Application Insights when a connection string is configured.</summary>
+internal static class Telemetry
+{
+    public const string Name = "StockWatch";
+
+    public static readonly ActivitySource Source = new(Name);
+    private static readonly Meter Meter = new(Name);
+
+    public static readonly Counter<long> CompaniesResearched = Meter.CreateCounter<long>("stockwatch.companies.researched");
+    public static readonly Counter<long> CompaniesFailed = Meter.CreateCounter<long>("stockwatch.companies.failed");
+    public static readonly Histogram<double> CompanySeconds = Meter.CreateHistogram<double>("stockwatch.company.duration", "s");
+    public static readonly Histogram<double> RunSeconds = Meter.CreateHistogram<double>("stockwatch.run.duration", "s");
 }
 
 internal sealed record Company(string Ticker, string Name, string? Exchange);
@@ -98,14 +114,26 @@ internal sealed class AnalystResearcher(IChatClient chatClient)
             Company: {company.Name}, ticker {company.Ticker}{exchange}
             Window (UTC): {nowUtc.AddHours(-24):yyyy-MM-dd HH:mm} to {nowUtc:yyyy-MM-dd HH:mm}
             """;
+        using Activity? activity = Telemetry.Source.StartActivity("research_company");
+        activity?.SetTag("stockwatch.ticker", company.Ticker);
+        long start = Stopwatch.GetTimestamp();
         try
         {
             AgentResponse response = await _agent.RunAsync(prompt, cancellationToken: ct);
+            Telemetry.CompaniesResearched.Add(1);
             return new CompanyReport(company, response.Text.Trim(), Failed: false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            Telemetry.CompaniesFailed.Add(1);
             return new CompanyReport(company, $"_Research failed: {ex.Message}_", Failed: true);
+        }
+        finally
+        {
+            Telemetry.CompanySeconds.Record(Stopwatch.GetElapsedTime(start).TotalSeconds,
+                new KeyValuePair<string, object?>("ticker", company.Ticker));
         }
     }
 }
@@ -138,6 +166,8 @@ internal sealed class ReviewRunner(CompanyStore companies, AnalystResearcher res
 {
     public async Task<string> RunAsync(CancellationToken ct = default)
     {
+        using Activity? activity = Telemetry.Source.StartActivity("analyst_review");
+        long start = Stopwatch.GetTimestamp();
         DateTimeOffset now = DateTimeOffset.UtcNow;
         IReadOnlyList<Company> list = await companies.GetActiveAsync(ct);
         if (list.Count == 0)
@@ -155,6 +185,10 @@ internal sealed class ReviewRunner(CompanyStore companies, AnalystResearcher res
         string markdown = ReportComposer.Compose(now, results);
         Uri blob = await store.SaveAsync(now, markdown, ct);
         int failed = results.Count(r => r.Failed);
+        activity?.SetTag("stockwatch.companies", list.Count);
+        activity?.SetTag("stockwatch.failed", failed);
+        activity?.SetTag("stockwatch.report", blob.ToString());
+        Telemetry.RunSeconds.Record(Stopwatch.GetElapsedTime(start).TotalSeconds);
         return $"Analyst review done for {list.Count} companies ({failed} failed). Consolidated report: {blob}";
     }
 }
