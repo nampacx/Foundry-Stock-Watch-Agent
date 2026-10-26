@@ -14,6 +14,7 @@ using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -48,7 +49,10 @@ IChatClient chatClient = new AIProjectClient(new Uri(projectEndpoint), credentia
     .UseOpenTelemetry(sourceName: Telemetry.Name)
     .Build();
 
-var runner = new ReviewRunner(companies, new AnalystResearcher(chatClient), reports, maxParallel);
+// Console logger (visible with `azd ai agent monitor`); failures are also recorded on the telemetry spans.
+using ILoggerFactory loggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.SingleLine = true));
+
+var runner = new ReviewRunner(companies, new AnalystResearcher(chatClient, loggerFactory.CreateLogger<AnalystResearcher>()), reports, maxParallel);
 
 AIFunction reviewTool = AIFunctionFactory.Create(
     runner.RunAsync,

@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.ClientModel;
 using System.Text;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace StockWatchAgent;
 
@@ -31,6 +33,7 @@ internal static class Telemetry
     private static readonly Meter Meter = new(Name);
 
     public static readonly Counter<long> CompaniesResearched = Meter.CreateCounter<long>("stockwatch.companies.researched");
+    public static readonly Counter<long> RateLimited = Meter.CreateCounter<long>("stockwatch.model.rate_limited");
     public static readonly Counter<long> CompaniesFailed = Meter.CreateCounter<long>("stockwatch.companies.failed");
     public static readonly Histogram<double> CompanySeconds = Meter.CreateHistogram<double>("stockwatch.company.duration", "s");
     public static readonly Histogram<double> RunSeconds = Meter.CreateHistogram<double>("stockwatch.run.duration", "s");
@@ -77,7 +80,7 @@ internal sealed class ReportStore(BlobContainerClient container)
 }
 
 /// <summary>Researches one company: an inner agent with web search collects the last 24h of analyst activity.</summary>
-internal sealed class AnalystResearcher(IChatClient chatClient)
+internal sealed class AnalystResearcher(IChatClient chatClient, ILogger<AnalystResearcher> logger)
 {
     private const string Instructions = """
         You are an equity research assistant helping a private investor monitor their holdings.
@@ -107,6 +110,22 @@ internal sealed class AnalystResearcher(IChatClient chatClient)
         description: "Collects the last 24h of analyst information for one company.",
         tools: [new HostedWebSearchTool()]);
 
+    private const int MaxAttempts = 3;
+
+    private static bool IsRateLimit(Exception ex) =>
+        ex is ClientResultException { Status: 429 } ||
+        ex.Message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ||
+        (ex.InnerException is { } inner && IsRateLimit(inner));
+
+    // Honour Retry-After when the service sends one, otherwise back off 30s, 60s, ...; capped at 2 minutes.
+    private static TimeSpan RetryDelay(Exception ex, int attempt)
+    {
+        if (ex is ClientResultException cre && cre.GetRawResponse()?.Headers.TryGetValue("Retry-After", out string? value) == true
+            && int.TryParse(value, out int seconds))
+            return TimeSpan.FromSeconds(Math.Clamp(seconds, 1, 120));
+        return TimeSpan.FromSeconds(Math.Min(30 * attempt, 120));
+    }
+
     public async Task<CompanyReport> ResearchAsync(Company company, DateTimeOffset nowUtc, CancellationToken ct)
     {
         string exchange = string.IsNullOrWhiteSpace(company.Exchange) ? "" : $" ({company.Exchange})";
@@ -119,16 +138,37 @@ internal sealed class AnalystResearcher(IChatClient chatClient)
         long start = Stopwatch.GetTimestamp();
         try
         {
-            AgentResponse response = await _agent.RunAsync(prompt, cancellationToken: ct);
-            Telemetry.CompaniesResearched.Add(1);
-            return new CompanyReport(company, response.Text.Trim(), Failed: false);
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    AgentResponse response = await _agent.RunAsync(prompt, cancellationToken: ct);
+                    Telemetry.CompaniesResearched.Add(1);
+                    return new CompanyReport(company, response.Text.Trim(), Failed: false);
+                }
+                catch (Exception ex) when (IsRateLimit(ex) && attempt < MaxAttempts)
+                {
+                    TimeSpan delay = RetryDelay(ex, attempt);
+                    logger.LogWarning("Model rate limit for {Ticker} (attempt {Attempt}/{Max}); retrying in {Delay}s: {Message}",
+                        company.Ticker, attempt, MaxAttempts, (int)delay.TotalSeconds, ex.Message);
+                    activity?.AddEvent(new ActivityEvent("rate_limited", tags: new ActivityTagsCollection { ["attempt"] = attempt }));
+                    Telemetry.RateLimited.Add(1);
+                    await Task.Delay(delay, ct);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            bool rateLimited = IsRateLimit(ex);
+            logger.LogError(ex, "Research failed for {Ticker}{Reason}", company.Ticker, rateLimited ? " (model rate limit exceeded, retries exhausted)" : "");
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
             Telemetry.CompaniesFailed.Add(1);
-            return new CompanyReport(company, $"_Research failed: {ex.Message}_", Failed: true);
+            if (rateLimited) Telemetry.RateLimited.Add(1);
+            string reason = rateLimited
+                ? "model rate limit exceeded (token quota); lower MAX_PARALLEL_COMPANIES or raise the deployment quota"
+                : ex.Message;
+            return new CompanyReport(company, $"_Research failed: {reason}_", Failed: true);
         }
         finally
         {
