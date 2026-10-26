@@ -164,9 +164,7 @@ var roles = {
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   monitoringReader: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
-  storageBlobContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
   storageBlobReader: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
-  storageTableReader: '76199698-9eea-4c19-bc75-cec21354c6b6'
   storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 }
 
@@ -181,27 +179,7 @@ resource foundryReadsAppInsights 'Microsoft.Authorization/roleAssignments@2022-0
   }
 }
 
-// The hosted agent reads the watchlist and writes reports. NOTE: this grants the Foundry project's managed identity;
-// if your hosted agent runs under a separate agent identity, grant that principal the same two roles.
-resource agentReadsWatchlist 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, foundryAccount::project.id, roles.storageTableReader)
-  properties: {
-    principalId: foundryAccount::project.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageTableReader)
-  }
-}
-
-resource agentWritesReports 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, foundryAccount::project.id, roles.storageBlobContributor)
-  properties: {
-    principalId: foundryAccount::project.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobContributor)
-  }
-}
+// The hosted agent's own identity (created at deploy time) gets its storage roles from scripts/grant-agent-access.ps1.
 
 // The user maintains the watchlist (seed script) and reviews the reports.
 resource userEditsWatchlist 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(userPrincipalId)) {

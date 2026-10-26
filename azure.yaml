@@ -46,6 +46,13 @@ services:
       resources:
         cpu: '0.5'
         memory: 1Gi
+    hooks:
+      # The agent's own identity only exists after deployment; give it access to storage (service hooks run from
+      # the service folder, hence ../../scripts).
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: ../../scripts/grant-agent-access.ps1
 
   # The schedule: every weekday morning -> stockwatch-agent. Created by `azd deploy` after the agent.
   stockwatch-daily-review:
