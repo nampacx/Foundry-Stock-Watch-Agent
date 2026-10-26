@@ -1,4 +1,4 @@
-# Grants the hosted agent's own identity access to the storage account (watchlist table + report container)
+# Grants the hosted agent's own identity access to the storage account (watchlist and reports tables)
 # and the Foundry account. The identity only exists once the agent is deployed, so this runs as the
 # postdeploy hook of the stockwatch-agent service (and can be re-run by hand). Needs Owner or
 # User Access Administrator on the resource group.
@@ -15,8 +15,7 @@ if (-not $principal) { throw 'Agent instance identity not found. Is the agent de
 
 $base = "/subscriptions/$sub/resourceGroups/$rg/providers"
 $grants = @(
-    @{ Role = '76199698-9eea-4c19-bc75-cec21354c6b6'; Scope = "$base/Microsoft.Storage/storageAccounts/$storage" }        # Storage Table Data Reader
-    @{ Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Scope = "$base/Microsoft.Storage/storageAccounts/$storage" }        # Storage Blob Data Contributor
+    @{ Role = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'; Scope = "$base/Microsoft.Storage/storageAccounts/$storage" }        # Storage Table Data Contributor (reads the watchlist, writes the reports)
     @{ Role = '53ca6127-db72-4b80-b1b0-d745d6d5456d'; Scope = "$base/Microsoft.CognitiveServices/accounts/$account" }      # Azure AI User
 )
 foreach ($g in $grants) {

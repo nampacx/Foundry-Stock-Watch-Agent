@@ -16,7 +16,6 @@
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.22.0-preview.260918.1" />
     <PackageReference Include="Azure.AI.Projects" Version="3.0.0-beta.2" />
     <PackageReference Include="Azure.Data.Tables" Version="12.11.0" />
-    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
   </ItemGroup>
 
