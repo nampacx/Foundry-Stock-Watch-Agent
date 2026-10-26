@@ -1,0 +1,11 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 2,
+    "title": "SAVE10 and SAVE25 coupons have no effect on the cart total",
+    "body": "POST /cart/total with items totalling 50.00 and coupon \"SAVE10\".\nExpected: discount 5.00, total 45.00.\nActual: discount 0, total 50.00. Same for SAVE25. Unknown coupons correctly do nothing, valid ones silently do nothing too.",
+    "user": { "login": "octocat" },
+    "labels": []
+  },
+  "repository": { "full_name": "nampacx/Foundry-GH-Triage-Agent" }
+}
