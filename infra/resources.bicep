@@ -83,6 +83,23 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
       }
       dependsOn: [ foundryAcrPull ]
     }
+
+    // Lets the project's agents and routines send traces to the same Application Insights as the MCP function.
+    resource appInsightsConnection 'connections' = {
+      name: '${appi.name}-conn'
+      properties: {
+        category: 'AppInsights'
+        target: appi.id
+        authType: 'ApiKey' // the portal creates ProjectManagedIdentity, which the Bicep type definitions do not list yet
+        credentials: { key: appi.properties.ConnectionString }
+        isSharedToAll: false
+        metadata: {
+          ApiType: 'Azure'
+          ResourceId: appi.id
+          ApplicationInsightsConnectionString: appi.properties.ConnectionString
+        }
+      }
+    }
   }
 }
 
@@ -282,3 +299,5 @@ output FOUNDRY_PROJECT_ENDPOINT string = 'https://${foundryAccount.name}.service
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = registry.properties.loginServer
 output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = registry.id
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = foundryAccount::project::acrConnection.name
+output APPLICATIONINSIGHTS_NAME string = appi.name
+output AZURE_AI_PROJECT_APPINSIGHTS_CONNECTION_NAME string = foundryAccount::project::appInsightsConnection.name
