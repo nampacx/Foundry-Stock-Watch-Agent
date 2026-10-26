@@ -1,0 +1,15 @@
+# Foundry routine: recurring schedule -> hosted analyst agent.
+# Weekdays at 07:00 Europe/Berlin (before the European open). The service enforces a minimum interval of 5 minutes.
+# Change `cronExpression` / `timeZone` to taste; the input is only a nudge, the agent always runs the full review.
+name: stockwatch-daily-review
+description: Daily analyst-information review of the stock watchlist.
+enabled: true
+triggers:
+  weekday-morning:
+    type: schedule
+    cronExpression: "0 7 * * 1-5"
+    timeZone: Europe/Berlin
+action:
+  type: invoke_agent_responses_api
+  agentName: stockwatch-agent
+  input: Run the daily analyst review.

@@ -1,7 +1,5 @@
-// Everything in one resource group: Foundry (account, project, model deployments, ACR) and the
-// GitHub REST -> MCP wrapper (Function App on Flex Consumption + Key Vault holding the PAT).
-// The app's system-assigned identity reads the secret through a Key Vault reference; no secret is in the template.
-// The secret itself (github-pat) is written by the postprovision hook, never via template parameters.
+// Everything in one resource group: Foundry (account, project, model deployments, ACR), a Storage account
+// (Table 'watchlist', Blob container 'stockwatch-reports' = consolidated reports) and Application Insights.
 targetScope = 'resourceGroup'
 
 param location string
@@ -11,28 +9,26 @@ param resourceTokenSalt string = ''
 param foundryProjectName string
 param deployments array = []
 
-@description('Object id of the person/pipeline that stores the PAT (gets Key Vault Secrets Officer). Optional.')
-#disable-next-line secure-secrets-in-params // an object id, not a secret
-param secretsOfficerPrincipalId string = ''
+@description('Object id of the signed-in user/pipeline; gets Azure AI User on the account and data rights on the storage account (seed the watchlist, read reports). Optional.')
+param userPrincipalId string = ''
 #disable-next-line secure-secrets-in-params // 'User' | 'ServicePrincipal', not a secret
-param secretsOfficerPrincipalType string = 'User'
+param userPrincipalType string = 'User'
 
-@description('Optional "owner/repo" the MCP server is restricted to (ALLOWED_REPO). Empty = any repository the PAT can read.')
-param allowedRepo string = ''
+@description('Table holding the watchlist.')
+param watchlistTable string = 'watchlist'
+@description('Blob container receiving the consolidated reports.')
+param reportsContainer string = 'stockwatch-reports'
 
 // Same formula the former Foundry layer used, so existing Foundry resource names are kept.
 var foundryToken = empty(resourceTokenSalt)
   ? uniqueString(subscription().id, resourceGroup().id, location)
   : uniqueString(subscription().id, resourceGroup().id, location, resourceTokenSalt)
-var foundryAccountName = 'cog-${foundryToken}'
-var acrName = 'cr${foundryToken}'
+var foundryAccountName = 'aif-stockwatch-${foundryToken}'
+var acrName = 'crstockwatch${foundryToken}'
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
-var funcName = 'func-ghmcp-${resourceToken}'
-var kvName = 'kv-ghmcp-${take(resourceToken, 8)}'
-var storageName = 'stghmcp${take(resourceToken, 10)}'
-var deployContainer = 'app-package'
-var patSecretName = 'github-pat' // written by scripts/store-github-pat.*
+var storageName = 'ststockwatch${take(resourceToken, 10)}'
+var monitorName = 'stockwatch-${take(resourceToken, 8)}'
 
 // --- Foundry ---
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
@@ -84,7 +80,7 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
       dependsOn: [ foundryAcrPull ]
     }
 
-    // Lets the project's agents and routines send traces to the same Application Insights as the MCP function.
+    // Lets the project's agents and routines send traces to Application Insights.
     resource appInsightsConnection 'connections' = {
       name: '${appi.name}-conn'
       properties: {
@@ -107,7 +103,7 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
   location: location
   tags: tags
-  sku: { name: 'Basic' } // remote image builds (ACR Tasks) work on Basic; Premium is not needed for a demo
+  sku: { name: 'Basic' } // remote image builds (ACR Tasks) work on Basic
   identity: { type: 'SystemAssigned' }
   properties: { adminUserEnabled: false, publicNetworkAccess: 'Enabled', zoneRedundancy: 'Disabled' }
 }
@@ -122,7 +118,7 @@ resource foundryAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// --- GitHub MCP ---
+// --- Storage: watchlist table + report container ---
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
   location: location
@@ -136,92 +132,39 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
   resource blob 'blobServices' = {
     name: 'default'
-    resource pkg 'containers' = {
-      name: deployContainer
+    resource reports 'containers' = {
+      name: reportsContainer
+    }
+  }
+  resource table 'tableServices' = {
+    name: 'default'
+    resource watchlist 'tables' = {
+      name: watchlistTable
     }
   }
 }
 
-resource kv 'Microsoft.KeyVault/vaults@2024-11-01' = {
-  name: kvName
-  location: location
-  tags: tags
-  properties: {
-    sku: { family: 'A', name: 'standard' }
-    tenantId: subscription().tenantId
-    enableRbacAuthorization: true
-    enableSoftDelete: true
-    softDeleteRetentionInDays: 7
-  }
-}
-
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: 'log-${funcName}'
+  name: 'log-${monitorName}'
   location: location
   tags: tags
   properties: { sku: { name: 'PerGB2018' }, retentionInDays: 30 }
 }
 
 resource appi 'Microsoft.Insights/components@2020-02-02' = {
-  name: 'appi-${funcName}'
+  name: 'appi-${monitorName}'
   location: location
   tags: tags
   kind: 'web'
   properties: { Application_Type: 'web', WorkspaceResourceId: logs.id }
 }
 
-resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
-  name: 'plan-${funcName}'
-  location: location
-  tags: tags
-  kind: 'functionapp'
-  sku: { name: 'FC1', tier: 'FlexConsumption' }
-  properties: { reserved: true }
-}
-
-resource func 'Microsoft.Web/sites@2024-04-01' = {
-  name: funcName
-  location: location
-  // azd matches the azure.yaml service 'github-mcp' to this resource by this tag.
-  tags: union(tags, { 'azd-service-name': 'github-mcp' })
-  kind: 'functionapp,linux'
-  identity: { type: 'SystemAssigned' }
-  properties: {
-    serverFarmId: plan.id
-    httpsOnly: true
-    keyVaultReferenceIdentity: 'SystemAssigned'
-    functionAppConfig: {
-      deployment: {
-        storage: {
-          type: 'blobContainer'
-          value: '${storage.properties.primaryEndpoints.blob}${deployContainer}'
-          authentication: { type: 'SystemAssignedIdentity' }
-        }
-      }
-      scaleAndConcurrency: { maximumInstanceCount: 40, instanceMemoryMB: 2048 }
-      runtime: { name: 'dotnet-isolated', version: '10.0' } // '10' leaves the host unable to start; the platform reports '10.0'
-    }
-    siteConfig: {
-      appSettings: [
-        { name: 'AzureWebJobsStorage__accountName', value: storage.name }
-        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appi.properties.ConnectionString }
-        // Key Vault reference, unversioned so a rotated secret is picked up automatically (within ~24h, or on restart).
-        { name: 'ALLOWED_REPO', value: allowedRepo }
-        { name: 'GITHUB_PAT', value: '@Microsoft.KeyVault(VaultName=${kv.name};SecretName=${patSecretName})' }
-      ]
-    }
-  }
-}
-
 // --- RBAC ---
 var roles = {
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-  kvSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
-  kvSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   monitoringReader: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
-  storageBlobOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
-  storageQueueContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+  storageBlobReader: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
   storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 }
 
@@ -236,72 +179,43 @@ resource foundryReadsAppInsights 'Microsoft.Authorization/roleAssignments@2022-0
   }
 }
 
-resource funcReadsSecret'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: kv
-  name: guid(kv.id, func.id, roles.kvSecretsUser)
-  properties: {
-    principalId: func.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.kvSecretsUser)
-  }
-}
+// The hosted agent's own identity (created at deploy time) gets its storage roles from scripts/grant-agent-access.ps1.
 
-resource funcUsesStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// The user maintains the watchlist (seed script) and reviews the reports.
+resource userEditsWatchlist 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(userPrincipalId)) {
   scope: storage
-  name: guid(storage.id, func.id, roles.storageBlobOwner)
+  name: guid(storage.id, userPrincipalId, roles.storageTableContributor)
   properties: {
-    principalId: func.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobOwner)
-  }
-}
-
-// The host writes startup diagnostics to Table storage and some extensions use queues, both through AzureWebJobsStorage.
-resource funcUsesStorageTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storage
-  name: guid(storage.id, func.id, roles.storageTableContributor)
-  properties: {
-    principalId: func.identity.principalId
-    principalType: 'ServicePrincipal'
+    principalId: userPrincipalId
+    principalType: userPrincipalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageTableContributor)
   }
 }
 
-resource funcUsesStorageQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource userReadsReports 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(userPrincipalId)) {
   scope: storage
-  name: guid(storage.id, func.id, roles.storageQueueContributor)
+  name: guid(storage.id, userPrincipalId, roles.storageBlobReader)
   properties: {
-    principalId: func.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageQueueContributor)
+    principalId: userPrincipalId
+    principalType: userPrincipalType
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobReader)
   }
 }
 
-resource officer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(secretsOfficerPrincipalId)) {
-  scope: kv
-  name: guid(kv.id, secretsOfficerPrincipalId, roles.kvSecretsOfficer)
-  properties: {
-    principalId: secretsOfficerPrincipalId
-    principalType: secretsOfficerPrincipalType
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.kvSecretsOfficer)
-  }
-}
-
-// The deploying user creates agents, connections, toolboxes and routines in the project (azd ai ...), which
-// needs data-plane rights on the Foundry account.
-resource userAzureAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(secretsOfficerPrincipalId)) {
+// The deploying user creates agents and routines in the project (azd ai ...), which needs data-plane rights on the Foundry account.
+resource userAzureAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(userPrincipalId)) {
   scope: foundryAccount
-  name: guid(foundryAccount.id, secretsOfficerPrincipalId, roles.azureAiUser)
+  name: guid(foundryAccount.id, userPrincipalId, roles.azureAiUser)
   properties: {
-    principalId: secretsOfficerPrincipalId
-    principalType: secretsOfficerPrincipalType
+    principalId: userPrincipalId
+    principalType: userPrincipalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.azureAiUser)
   }
 }
 
-output functionAppName string = func.name
-output keyVaultName string = kv.name
-output mcpEndpoint string = 'https://${func.properties.defaultHostName}/runtime/webhooks/mcp'
+output STORAGE_ACCOUNT_NAME string = storage.name
+output WATCHLIST_TABLE string = watchlistTable
+output REPORTS_CONTAINER string = reportsContainer
 
 output AZURE_AI_PROJECT_ID string = foundryAccount::project.id
 output AZURE_AI_ACCOUNT_NAME string = foundryAccount.name
@@ -312,4 +226,7 @@ output AZURE_CONTAINER_REGISTRY_ENDPOINT string = registry.properties.loginServe
 output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = registry.id
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = foundryAccount::project::acrConnection.name
 output APPLICATIONINSIGHTS_NAME string = appi.name
+// Ingestion settings, not a data-plane credential; the hosted agent needs it to export telemetry.
+#disable-next-line outputs-should-not-contain-secrets
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = appi.properties.ConnectionString
 output AZURE_AI_PROJECT_APPINSIGHTS_CONNECTION_NAME string = foundryAccount::project::appInsightsConnection.name

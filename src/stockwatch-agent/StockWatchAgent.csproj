@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <RootNamespace>TriageAgent</RootNamespace>
-    <AssemblyName>TriageAgent</AssemblyName>
+    <RootNamespace>StockWatchAgent</RootNamespace>
+    <AssemblyName>StockWatchAgent</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Experimental APIs used by the Agent Framework / OpenAI hosting packages. -->
@@ -11,10 +11,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
     <PackageReference Include="Microsoft.Agents.AI" Version="1.22.0" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.22.0-preview.260918.1" />
     <PackageReference Include="Azure.AI.Projects" Version="3.0.0-beta.2" />
-    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
+    <PackageReference Include="Azure.Data.Tables" Version="12.11.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
   </ItemGroup>
 

@@ -1,6 +1,6 @@
-// Single azd deployment: one resource group holding the Foundry account/project/model/ACR and the
-// GitHub REST -> MCP Function App with its Key Vault. Outputs are written to the azd environment and
-// consumed by azure.yaml (services, github-mcp service lookup) and the hook scripts.
+// Single azd deployment: one resource group holding the Foundry account/project/model/ACR, the storage account
+// (watchlist table + report container) and Application Insights. Outputs are written to the azd environment and
+// consumed by azure.yaml and the scripts.
 targetScope = 'subscription'
 
 @minLength(1)
@@ -21,17 +21,14 @@ param foundryProjectName string
 @description('Model deployments on the Foundry account.')
 param deployments array = []
 
-@description('Object id of the signed-in user/pipeline; granted Key Vault Secrets Officer (store the PAT) and Azure AI User on the Foundry account.')
+@description('Object id of the signed-in user/pipeline; granted Azure AI User and storage data rights.')
 param principalId string = ''
 param principalType string = 'User'
-
-@description('Optional "owner/repo" the GitHub MCP server is restricted to.')
-param allowedRepo string = ''
 
 @description('Optional salt to vary resource names across re-provisions.')
 param resourceTokenSalt string = ''
 
-var tags = { 'azd-env-name': environmentName }
+var tags = { 'azd-env-name': environmentName, workload: 'stock-watch' }
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
@@ -49,9 +46,8 @@ module resources 'resources.bicep' = {
     resourceTokenSalt: resourceTokenSalt
     foundryProjectName: foundryProjectName
     deployments: deployments
-    allowedRepo: allowedRepo
-    secretsOfficerPrincipalId: principalId
-    secretsOfficerPrincipalType: principalType
+    userPrincipalId: principalId
+    userPrincipalType: principalType
   }
 }
 
@@ -65,7 +61,8 @@ output FOUNDRY_PROJECT_ENDPOINT string = resources.outputs.FOUNDRY_PROJECT_ENDPO
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = resources.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT
 output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = resources.outputs.AZURE_CONTAINER_REGISTRY_RESOURCE_ID
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = resources.outputs.AZURE_AI_PROJECT_ACR_CONNECTION_NAME
-output GITHUB_MCP_RESOURCE_GROUP string = rg.name
-output GITHUB_MCP_FUNCTION_NAME string = resources.outputs.functionAppName
-output GITHUB_MCP_KEY_VAULT_NAME string = resources.outputs.keyVaultName
-output GITHUB_MCP_ENDPOINT string = resources.outputs.mcpEndpoint
+output STORAGE_ACCOUNT_NAME string = resources.outputs.STORAGE_ACCOUNT_NAME
+output WATCHLIST_TABLE string = resources.outputs.WATCHLIST_TABLE
+output REPORTS_CONTAINER string = resources.outputs.REPORTS_CONTAINER
+#disable-next-line outputs-should-not-contain-secrets
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.APPLICATIONINSIGHTS_CONNECTION_STRING
