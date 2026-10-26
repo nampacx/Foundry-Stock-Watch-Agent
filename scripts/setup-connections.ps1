@@ -92,7 +92,9 @@ try {
         if ((Get-Status) -eq 'Connected') { Write-Host "Connection '$name' is Connected."; return }
         Start-Sleep -Seconds 5
     }
-    throw "Timed out waiting for consent on connection '$name'. Re-run: azd hooks run postprovision"
+    # The docs say the status only flips to Connected once actions are registered too, which a trigger-only
+    # connection never does, so do not fail the deployment here; the routine creation will show if consent is missing.
+    Write-Warning "Connection '$name' still reports '$(Get-Status)' after 5 minutes. Continuing; if routine creation fails, re-run: azd hooks run postprovision"
 }
 finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

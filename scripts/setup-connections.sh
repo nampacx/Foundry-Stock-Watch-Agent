@@ -67,5 +67,6 @@ while [ "$i" -lt 60 ]; do
   if [ "$(status)" = "Connected" ]; then echo "Connection '$name' is Connected."; exit 0; fi
   i=$((i + 1)); sleep 5
 done
-echo "Timed out waiting for consent on '$name'. Re-run: azd hooks run postprovision" >&2
-exit 1
+# The docs say the status only flips to Connected once actions are registered too, which a trigger-only
+# connection never does, so do not fail the deployment here; the routine creation will show if consent is missing.
+echo "WARNING: connection '$name' still reports '$(status)' after 5 minutes. Continuing; if routine creation fails, re-run: azd hooks run postprovision" >&2
