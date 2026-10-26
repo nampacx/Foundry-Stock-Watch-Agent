@@ -1,0 +1,76 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1b1f24;
+  --muted: #5b6573;
+  --border: #d9dee5;
+  --accent: #0f62fe;
+  --bullish: #1a7f37;
+  --bearish: #c4261d;
+  --neutral: #6b7280;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --surface: #1d2126;
+    --text: #e6e9ed;
+    --muted: #9aa4b2;
+    --border: #2f353d;
+    --accent: #6ea8fe;
+    --bullish: #4cc16b;
+    --bearish: #ff7b72;
+    --neutral: #9aa4b2;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#root { max-width: 72rem; margin: 0 auto; padding: 0 16px 32px; }
+
+header { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 0 4px; }
+h1 { font-size: 1.5rem; margin: 0; }
+h2 { font-size: 1.25rem; margin: 0 0 12px; }
+a { color: var(--accent); }
+
+.disclaimer { color: var(--muted); font-size: 0.875rem; margin: 0 0 16px; }
+.muted { color: var(--muted); }
+.error { color: var(--bearish); }
+.ticker { color: var(--muted); font-weight: 400; font-size: 0.9em; }
+
+main { display: grid; grid-template-columns: minmax(14rem, 20rem) 1fr; gap: 16px; align-items: start; }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+
+nav { display: flex; flex-direction: column; gap: 8px; }
+
+.company {
+  display: grid; gap: 4px; text-align: left; padding: 10px 12px; font: inherit; color: inherit;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+}
+.company.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.company .badge { justify-self: start; }
+
+.detail { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-width: 0; }
+
+.report { border-top: 1px solid var(--border); padding: 8px 0; }
+.report:first-of-type { border-top: 0; }
+.report summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0; }
+
+.badge {
+  font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid currentColor; color: var(--neutral); white-space: nowrap;
+}
+.badge.bullish { color: var(--bullish); }
+.badge.bearish, .badge.failed { color: var(--bearish); }
+
+.markdown { overflow-wrap: anywhere; line-height: 1.5; }
+.markdown p { margin: 0.5em 0; }
+.markdown ul { padding-left: 1.25rem; }

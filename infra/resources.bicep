@@ -1,5 +1,5 @@
 // Everything in one resource group: Foundry (account, project, model deployments, ACR), a Storage account
-// (Table 'watchlist', Blob container 'stockwatch-reports' = consolidated reports) and Application Insights.
+// (Tables 'watchlist' and 'reports'), Application Insights and the report viewer (Static Web App + linked Function app API).
 targetScope = 'resourceGroup'
 
 param location string
@@ -16,8 +16,10 @@ param userPrincipalType string = 'User'
 
 @description('Table holding the watchlist.')
 param watchlistTable string = 'watchlist'
-@description('Blob container receiving the consolidated reports.')
-param reportsContainer string = 'stockwatch-reports'
+@description('Table receiving the reports: PartitionKey = ticker, RowKey = inverted run time.')
+param reportsTable string = 'reports'
+@description('Region of the Static Web App (only a few regions offer it; the linked Function app stays in the main region).')
+param staticWebAppLocation string = 'westeurope'
 
 // Same formula the former Foundry layer used, so existing Foundry resource names are kept.
 var foundryToken = empty(resourceTokenSalt)
@@ -29,6 +31,8 @@ var acrName = 'crstockwatch${foundryToken}'
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var storageName = 'ststockwatch${take(resourceToken, 10)}'
 var monitorName = 'stockwatch-${take(resourceToken, 8)}'
+var funcStorageName = 'stfunc${take(resourceToken, 12)}'
+var deploymentContainer = 'app-package'
 
 // --- Foundry ---
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
@@ -118,7 +122,7 @@ resource foundryAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// --- Storage: watchlist table + report container ---
+// --- Storage: watchlist + reports tables ---
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
   location: location
@@ -130,16 +134,13 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowBlobPublicAccess: false
     allowSharedKeyAccess: false
   }
-  resource blob 'blobServices' = {
-    name: 'default'
-    resource reports 'containers' = {
-      name: reportsContainer
-    }
-  }
   resource table 'tableServices' = {
     name: 'default'
     resource watchlist 'tables' = {
       name: watchlistTable
+    }
+    resource reports 'tables' = {
+      name: reportsTable
     }
   }
 }
@@ -164,8 +165,10 @@ var roles = {
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   monitoringReader: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
-  storageBlobReader: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+  storageTableReader: '76199698-9eea-4c19-bc75-cec21354c6b6'
   storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+  storageBlobOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+  storageQueueContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 }
 
 // The Insights tab in Foundry queries the connected Application Insights as the project's managed identity.
@@ -181,7 +184,7 @@ resource foundryReadsAppInsights 'Microsoft.Authorization/roleAssignments@2022-0
 
 // The hosted agent's own identity (created at deploy time) gets its storage roles from scripts/grant-agent-access.ps1.
 
-// The user maintains the watchlist (seed script) and reviews the reports.
+// The user maintains the watchlist (seed script); Table Data Contributor also lets them read the reports table.
 resource userEditsWatchlist 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(userPrincipalId)) {
   scope: storage
   name: guid(storage.id, userPrincipalId, roles.storageTableContributor)
@@ -189,16 +192,6 @@ resource userEditsWatchlist 'Microsoft.Authorization/roleAssignments@2022-04-01'
     principalId: userPrincipalId
     principalType: userPrincipalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageTableContributor)
-  }
-}
-
-resource userReadsReports 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(userPrincipalId)) {
-  scope: storage
-  name: guid(storage.id, userPrincipalId, roles.storageBlobReader)
-  properties: {
-    principalId: userPrincipalId
-    principalType: userPrincipalType
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobReader)
   }
 }
 
@@ -213,9 +206,140 @@ resource userAzureAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
+// --- Report viewer: Static Web App (React) -> /api -> Function app (C#) -> reports table ---
+// A Static Web App cannot use a managed identity to call storage, and managed functions have no identity either, so
+// the API is a separate Function app (Flex Consumption) linked as the SWA backend. It reads the tables with its own
+// user-assigned identity; no keys or connection strings anywhere.
+resource apiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-api-${monitorName}'
+  location: location
+  tags: tags
+}
+
+// Runtime storage of the function app (deployment package, host state), separate from the data account.
+resource funcStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: funcStorageName
+  location: location
+  tags: tags
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+  }
+  resource blob 'blobServices' = {
+    name: 'default'
+    resource deployment 'containers' = {
+      name: deploymentContainer
+    }
+  }
+}
+
+resource apiPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: 'plan-api-${monitorName}'
+  location: location
+  tags: tags
+  kind: 'functionapp'
+  sku: { name: 'FC1', tier: 'FlexConsumption' }
+  properties: { reserved: true }
+}
+
+resource api 'Microsoft.Web/sites@2024-04-01' = {
+  name: 'func-api-${monitorName}'
+  location: location
+  tags: union(tags, { 'azd-service-name': 'api' })
+  kind: 'functionapp,linux'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${apiIdentity.id}': {} }
+  }
+  properties: {
+    serverFarmId: apiPlan.id
+    httpsOnly: true
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${funcStorage.properties.primaryEndpoints.blob}${deploymentContainer}'
+          authentication: { type: 'UserAssignedIdentity', userAssignedIdentityResourceId: apiIdentity.id }
+        }
+      }
+      scaleAndConcurrency: { maximumInstanceCount: 40, instanceMemoryMB: 2048 }
+      runtime: { name: 'dotnet-isolated', version: '10.0' }
+    }
+    siteConfig: {
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      appSettings: [
+        { name: 'AzureWebJobsStorage__accountName', value: funcStorage.name }
+        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
+        { name: 'AzureWebJobsStorage__clientId', value: apiIdentity.properties.clientId }
+        { name: 'AZURE_CLIENT_ID', value: apiIdentity.properties.clientId }
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appi.properties.ConnectionString }
+        { name: 'STORAGE_ACCOUNT_NAME', value: storage.name }
+        { name: 'WATCHLIST_TABLE', value: watchlistTable }
+        { name: 'REPORTS_TABLE', value: reportsTable }
+      ]
+    }
+  }
+}
+
+var apiRuntimeRoles = [
+  roles.storageBlobOwner
+  roles.storageQueueContributor
+  roles.storageTableContributor
+]
+
+resource apiRuntimeStorageAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
+  for role in apiRuntimeRoles: {
+    scope: funcStorage
+    name: guid(funcStorage.id, apiIdentity.id, role)
+    properties: {
+      principalId: apiIdentity.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', role)
+    }
+  }
+]
+
+// Read-only on the data account: the API can read the watchlist and reports tables, nothing else.
+resource apiReadsTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, apiIdentity.id, roles.storageTableReader)
+  properties: {
+    principalId: apiIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageTableReader)
+  }
+}
+
+// Linking a backend requires the Standard plan.
+resource web 'Microsoft.Web/staticSites@2024-04-01' = {
+  name: 'swa-${monitorName}'
+  location: staticWebAppLocation
+  tags: union(tags, { 'azd-service-name': 'web' })
+  sku: { name: 'Standard', tier: 'Standard' }
+  properties: {}
+
+  // Puts the SWA in front of the function app: /api is proxied to it and App Service authentication on the function app
+  // only accepts calls that come through the SWA.
+  resource backend 'linkedBackends' = {
+    name: 'api'
+    properties: {
+      backendResourceId: api.id
+      region: location
+    }
+    dependsOn: [ apiRuntimeStorageAccess, apiReadsTables ]
+  }
+}
+
 output STORAGE_ACCOUNT_NAME string = storage.name
 output WATCHLIST_TABLE string = watchlistTable
-output REPORTS_CONTAINER string = reportsContainer
+output REPORTS_TABLE string = reportsTable
+output API_FUNCTION_APP_NAME string = api.name
+output STATIC_WEB_APP_NAME string = web.name
+output STATIC_WEB_APP_URL string = 'https://${web.properties.defaultHostname}'
 
 output AZURE_AI_PROJECT_ID string = foundryAccount::project.id
 output AZURE_AI_ACCOUNT_NAME string = foundryAccount.name

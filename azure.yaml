@@ -33,7 +33,7 @@ services:
       - ai-project
     kind: hosted
     name: stockwatch-agent
-    description: Reads the stock watchlist from Table storage, collects the last 24h of analyst information per company and stores one consolidated report in Blob storage.
+    description: Reads the stock watchlist from Table storage, collects the last 24h of analyst information per company and stores one report row per company in the reports table.
     protocols:
       - protocol: responses
         version: 2.0.0
@@ -42,7 +42,7 @@ services:
       STORAGE_ACCOUNT_NAME: ${STORAGE_ACCOUNT_NAME}
       WATCHLIST_TABLE: ${WATCHLIST_TABLE}
       MAX_PARALLEL_COMPANIES: '1'
-      REPORTS_CONTAINER: ${REPORTS_CONTAINER}
+      REPORTS_TABLE: ${REPORTS_TABLE}
     container:
       resources:
         cpu: '0.5'
@@ -61,6 +61,20 @@ services:
     uses:
       - stockwatch-agent
     $ref: ./routines/stockwatch-daily-review.yaml
+
+  # Read-only API for the viewer (C#, Azure Functions on Flex Consumption). Reads the tables with its managed identity;
+  # linked to the Static Web App as its /api backend (infra/resources.bicep).
+  api:
+    project: src/api
+    host: function
+    language: dotnet
+
+  # The report viewer (React + Vite) on Azure Static Web Apps. Public for now, see README.
+  web:
+    project: src/web
+    host: staticwebapp
+    language: js
+    dist: dist
 
 # One Bicep deployment (infra/main.bicep). `azd down --purge` removes it.
 infra:

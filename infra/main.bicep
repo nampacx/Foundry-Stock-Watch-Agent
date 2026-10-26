@@ -1,5 +1,5 @@
 // Single azd deployment: one resource group holding the Foundry account/project/model/ACR, the storage account
-// (watchlist table + report container) and Application Insights. Outputs are written to the azd environment and
+// (watchlist + reports tables), Application Insights and the report viewer (Static Web App + Function app). Outputs are written to the azd environment and
 // consumed by azure.yaml and the scripts.
 targetScope = 'subscription'
 
@@ -25,6 +25,9 @@ param deployments array = []
 param principalId string = ''
 param principalType string = 'User'
 
+@description('Region of the Static Web App (not every region offers it).')
+param staticWebAppLocation string = 'westeurope'
+
 @description('Optional salt to vary resource names across re-provisions.')
 param resourceTokenSalt string = ''
 
@@ -44,6 +47,7 @@ module resources 'resources.bicep' = {
     tags: tags
     environmentName: environmentName
     resourceTokenSalt: resourceTokenSalt
+    staticWebAppLocation: staticWebAppLocation
     foundryProjectName: foundryProjectName
     deployments: deployments
     userPrincipalId: principalId
@@ -63,6 +67,9 @@ output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = resources.outputs.AZURE_CON
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = resources.outputs.AZURE_AI_PROJECT_ACR_CONNECTION_NAME
 output STORAGE_ACCOUNT_NAME string = resources.outputs.STORAGE_ACCOUNT_NAME
 output WATCHLIST_TABLE string = resources.outputs.WATCHLIST_TABLE
-output REPORTS_CONTAINER string = resources.outputs.REPORTS_CONTAINER
+output REPORTS_TABLE string = resources.outputs.REPORTS_TABLE
+output API_FUNCTION_APP_NAME string = resources.outputs.API_FUNCTION_APP_NAME
+output STATIC_WEB_APP_NAME string = resources.outputs.STATIC_WEB_APP_NAME
+output STATIC_WEB_APP_URL string = resources.outputs.STATIC_WEB_APP_URL
 #disable-next-line outputs-should-not-contain-secrets
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = resources.outputs.APPLICATIONINSIGHTS_CONNECTION_STRING

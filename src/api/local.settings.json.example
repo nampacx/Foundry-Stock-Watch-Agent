@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "STORAGE_ACCOUNT_NAME": "<storage account name from `azd env get-values`>",
+    "WATCHLIST_TABLE": "watchlist",
+    "REPORTS_TABLE": "reports"
+  }
+}

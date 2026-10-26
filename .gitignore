@@ -432,3 +432,6 @@ local.settings.json
 
 # azd extension logs
 azd-*.log
+
+# Static web app build output
+src/web/dist/
