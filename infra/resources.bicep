@@ -83,6 +83,23 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
       }
       dependsOn: [ foundryAcrPull ]
     }
+
+    // Lets the project's agents and routines send traces to the same Application Insights as the MCP function.
+    resource appInsightsConnection 'connections' = {
+      name: '${appi.name}-conn'
+      properties: {
+        category: 'AppInsights'
+        target: appi.id
+        authType: 'ApiKey' // the portal creates ProjectManagedIdentity, which the Bicep type definitions do not list yet
+        credentials: { key: appi.properties.ConnectionString }
+        isSharedToAll: false
+        metadata: {
+          ApiType: 'Azure'
+          ResourceId: appi.id
+          ApplicationInsightsConnectionString: appi.properties.ConnectionString
+        }
+      }
+    }
   }
 }
 
@@ -202,12 +219,24 @@ var roles = {
   kvSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
   kvSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
+  monitoringReader: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
   storageBlobOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
   storageQueueContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
   storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 }
 
-resource funcReadsSecret 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// The Insights tab in Foundry queries the connected Application Insights as the project's managed identity.
+resource foundryReadsAppInsights 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: appi
+  name: guid(appi.id, foundryAccount::project.id, roles.monitoringReader)
+  properties: {
+    principalId: foundryAccount::project.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.monitoringReader)
+  }
+}
+
+resource funcReadsSecret'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: kv
   name: guid(kv.id, func.id, roles.kvSecretsUser)
   properties: {
@@ -282,3 +311,5 @@ output FOUNDRY_PROJECT_ENDPOINT string = 'https://${foundryAccount.name}.service
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = registry.properties.loginServer
 output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = registry.id
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = foundryAccount::project::acrConnection.name
+output APPLICATIONINSIGHTS_NAME string = appi.name
+output AZURE_AI_PROJECT_APPINSIGHTS_CONNECTION_NAME string = foundryAccount::project::appInsightsConnection.name

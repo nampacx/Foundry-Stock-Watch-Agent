@@ -7,7 +7,9 @@
 # `azd ai connection create --connector-name github` (connections extension beta.11) does not attach the
 # connector gateway metadata, so the connection can never be consented. This script therefore follows the
 # documented REST flow: look the connector up in the Foundry Tools Catalog, PUT the connection with
-# metadata.type=gateway_connector, then mint the consent link.
+# metadata.type=gateway_connector, register the GitHub issue operations (metadata.mcpserverConfigProperties),
+# then mint the consent link. Without the registered operations the platform never provisions the connector
+# gateway (target stays https://placeholder) and the github_issue trigger silently never fires.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -22,8 +24,34 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 status() { az rest --method get --url "$base?api-version=$api" --query properties.overallStatus -o tsv 2>/dev/null || true; }
+# Escape a JSON document so it can be embedded as a string value inside another JSON document.
+jstr() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
-if [ "$(status)" = "Connected" ]; then echo "Connection '$name' is already Connected."; exit 0; fi
+# Operations the github_issue trigger needs registered on the connection (names as the Foundry portal lists them).
+mcp_config='{"description":"","state":"Enabled","connectors":[{"name":"'"$connector"'","connectionName":"'"$name"'","displayName":"'"$connector"'","description":"","operations":[{"name":"IssueOpened","displayName":"When a new issue is opened and assigned to me","description":"","userParameters":[],"agentParameters":[]},{"name":"IssueClosed","displayName":"When an issue assigned to me is closed","description":"","userParameters":[],"agentParameters":[]}]}]}'
+
+# PUT the connection. $1 = entity id, $2 = connectionproperties string, $3 = "register" to include the operations.
+put_connection() {
+  extra=""
+  if [ "${3:-}" = "register" ]; then extra=',"mcpserverConfigProperties":"'"$(jstr "$mcp_config")"'"'; fi
+  cat > "$tmp/conn.json" <<JSON
+{"properties":{"authType":"OAuth2","category":"RemoteTool","connectorName":"$connector","target":"https://placeholder",
+ "credentials":{},"peRequirement":"NotRequired",
+ "metadata":{"type":"gateway_connector","toolEntityId":"$1","connectionproperties":"$(jstr "$2")"$extra}}}
+JSON
+  az rest --method put --url "$base?api-version=$api" --headers 'Content-Type=application/json' --body "@$tmp/conn.json" -o none
+}
+
+if [ "$(status)" = "Connected" ]; then
+  # Repair a connection created before the operations were registered: it is Connected but has no gateway.
+  if [ -z "$(az rest --method get --url "$base?api-version=$api" --query properties.metadata.mcpserverConfigProperties -o tsv 2>/dev/null)" ]; then
+    echo "Connection '$name' is Connected but has no registered operations; registering them..."
+    entity="$(az rest --method get --url "$base?api-version=$api" --query properties.metadata.toolEntityId -o tsv)"
+    props="$(az rest --method get --url "$base?api-version=$api" --query properties.metadata.connectionproperties -o tsv)"
+    put_connection "$entity" "$props" register
+  fi
+  echo "Connection '$name' is already Connected."; exit 0
+fi
 
 echo "Looking up connector '$connector' in the Foundry Tools Catalog..."
 cat > "$tmp/catalog.json" <<JSON
@@ -41,12 +69,13 @@ entity="$(az rest --method post --resource https://ai.azure.com --url https://ea
 [ -n "$entity" ] || { echo "Connector '$connector' not found in the Foundry Tools Catalog." >&2; exit 1; }
 
 echo "Creating connection '$name'..."
-cat > "$tmp/conn.json" <<JSON
-{"properties":{"authType":"OAuth2","category":"RemoteTool","connectorName":"$connector","target":"https://placeholder",
- "credentials":{},"peRequirement":"NotRequired",
- "metadata":{"type":"gateway_connector","toolEntityId":"$entity","connectionproperties":"{\"connectorName\":\"$connector\"}"}}}
-JSON
-az rest --method put --url "$base?api-version=$api" --headers 'Content-Type=application/json' --body "@$tmp/conn.json" -o none
+conn_props='{"connectorName":"'"$connector"'"}'
+put_connection "$entity" "$conn_props"
+
+# Register the issue operations. This is what makes the platform provision the connector gateway and rewrite
+# the placeholder target; consent can happen before or after it.
+echo "Registering GitHub issue operations on '$name'..."
+put_connection "$entity" "$conn_props" register
 
 oid="$(az ad signed-in-user show --query id -o tsv)"
 cat > "$tmp/consent.json" <<JSON
@@ -67,6 +96,6 @@ while [ "$i" -lt 60 ]; do
   if [ "$(status)" = "Connected" ]; then echo "Connection '$name' is Connected."; exit 0; fi
   i=$((i + 1)); sleep 5
 done
-# The docs say the status only flips to Connected once actions are registered too, which a trigger-only
-# connection never does, so do not fail the deployment here; the routine creation will show if consent is missing.
+# The status only flips to Connected once consent AND the registered operations are both in place. Do not fail
+# the deployment here; a routine on an unconsented connection is created but its trigger never fires.
 echo "WARNING: connection '$name' still reports '$(status)' after 5 minutes. Continuing; if routine creation fails, re-run: azd hooks run postprovision" >&2

@@ -6,7 +6,9 @@
 # `azd ai connection create --connector-name github` (connections extension beta.11) does not attach the
 # connector gateway metadata, so the connection can never be consented. This script therefore follows the
 # documented REST flow: look the connector up in the Foundry Tools Catalog, PUT the connection with
-# metadata.type=gateway_connector, then mint the consent link.
+# metadata.type=gateway_connector, register the GitHub issue operations (metadata.mcpserverConfigProperties),
+# then mint the consent link. Without the registered operations the platform never provisions the connector
+# gateway (target stays https://placeholder) and the github_issue trigger silently never fires.
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -29,8 +31,55 @@ function Get-Status {
     return $(if ($LASTEXITCODE -eq 0) { $s } else { $null })
 }
 
+# Operations the github_issue trigger needs registered on the connection (names as the Foundry portal lists them).
+function Get-McpConfig {
+    $ops = foreach ($op in @(
+            @{ name = 'IssueOpened'; displayName = 'When a new issue is opened and assigned to me' }
+            @{ name = 'IssueClosed'; displayName = 'When an issue assigned to me is closed' })) {
+        @{ name = $op.name; displayName = $op.displayName; description = ''; userParameters = @(); agentParameters = @() }
+    }
+    @{
+        description = ''
+        state       = 'Enabled'
+        connectors  = @(@{ name = $connector; connectionName = $name; displayName = $connector; description = ''; operations = @($ops) })
+    } | ConvertTo-Json -Depth 8 -Compress
+}
+
+# PUT the connection; -Register adds the operations. ConnectionProperties keeps what the platform already stored.
+function Set-Connection([string]$EntityId, [string]$ConnectionProperties, [switch]$Register) {
+    $metadata = [ordered]@{
+        type                 = 'gateway_connector'
+        toolEntityId         = $EntityId
+        connectionproperties = $ConnectionProperties
+    }
+    if ($Register) { $metadata.mcpserverConfigProperties = Get-McpConfig }
+    @{
+        properties = @{
+            authType      = 'OAuth2'
+            category      = 'RemoteTool'
+            connectorName = $connector
+            target        = 'https://placeholder'
+            credentials   = @{}
+            peRequirement = 'NotRequired'
+            metadata      = $metadata
+        }
+    } | ConvertTo-Json -Depth 8 | Set-Content "$tmp/conn.json" -Encoding utf8
+    az rest --method put --url $url --headers 'Content-Type=application/json' --body "@$tmp/conn.json" -o none
+    if ($LASTEXITCODE -ne 0) { throw 'Connection creation failed.' }
+}
+
 try {
-    if ((Get-Status) -eq 'Connected') { Write-Host "Connection '$name' is already Connected."; return }
+    if ((Get-Status) -eq 'Connected') {
+        # Repair a connection created before the operations were registered: it is Connected but has no gateway.
+        $registered = az rest --method get --url $url --query properties.metadata.mcpserverConfigProperties -o tsv 2>$null
+        if (-not $registered) {
+            Write-Host "Connection '$name' is Connected but has no registered operations; registering them..."
+            $entity = az rest --method get --url $url --query properties.metadata.toolEntityId -o tsv
+            $props = az rest --method get --url $url --query properties.metadata.connectionproperties -o tsv
+            Set-Connection $entity $props -Register
+        }
+        Write-Host "Connection '$name' is already Connected."; return
+    }
 
     # 1. Catalog lookup (served from eastus regardless of the project region).
     Write-Host "Looking up connector '$connector' in the Foundry Tools Catalog..."
@@ -54,23 +103,13 @@ try {
 
     # 2. Create the connection (target is a placeholder the platform rewrites once actions are registered).
     Write-Host "Creating connection '$name'..."
-    @{
-        properties = @{
-            authType      = 'OAuth2'
-            category      = 'RemoteTool'
-            connectorName = $connector
-            target        = 'https://placeholder'
-            credentials   = @{}
-            peRequirement = 'NotRequired'
-            metadata      = @{
-                type                 = 'gateway_connector'
-                toolEntityId         = $entityId
-                connectionproperties = (@{ connectorName = $connector } | ConvertTo-Json -Compress)
-            }
-        }
-    } | ConvertTo-Json -Depth 6 | Set-Content "$tmp/conn.json" -Encoding utf8
-    az rest --method put --url $url --headers 'Content-Type=application/json' --body "@$tmp/conn.json" -o none
-    if ($LASTEXITCODE -ne 0) { throw 'Connection creation failed.' }
+    $connProps = (@{ connectorName = $connector } | ConvertTo-Json -Compress)
+    Set-Connection $entityId $connProps
+
+    # Register the issue operations. This is what makes the platform provision the connector gateway and rewrite
+    # the placeholder target; consent can happen before or after it.
+    Write-Host "Registering GitHub issue operations on '$name'..."
+    Set-Connection $entityId $connProps -Register
 
     # 3. Consent link for the signed-in user.
     $oid = az ad signed-in-user show --query id -o tsv
@@ -92,8 +131,8 @@ try {
         if ((Get-Status) -eq 'Connected') { Write-Host "Connection '$name' is Connected."; return }
         Start-Sleep -Seconds 5
     }
-    # The docs say the status only flips to Connected once actions are registered too, which a trigger-only
-    # connection never does, so do not fail the deployment here; the routine creation will show if consent is missing.
+    # The status only flips to Connected once consent AND the registered operations are both in place. Do not fail
+    # the deployment here; a routine on an unconsented connection is created but its trigger never fires.
     Write-Warning "Connection '$name' still reports '$(Get-Status)' after 5 minutes. Continuing; if routine creation fails, re-run: azd hooks run postprovision"
 }
 finally {
