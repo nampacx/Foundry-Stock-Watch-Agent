@@ -37,7 +37,11 @@ var reports = new ReportStore(
 IChatClient chatClient = new AIProjectClient(new Uri(projectEndpoint), credential)
     .GetProjectOpenAIClient()
     .GetProjectResponsesClientForModel(deployment)
-    .AsIChatClient();
+    .AsIChatClient()
+    // The Responses API requires "model" on every request; the project client does not add it by itself.
+    .AsBuilder()
+    .ConfigureOptions(o => o.ModelId ??= deployment)
+    .Build();
 
 var runner = new ReviewRunner(companies, new AnalystResearcher(chatClient), reports, maxParallel);
 
