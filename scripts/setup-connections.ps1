@@ -1,31 +1,101 @@
-# azd postprovision hook of the "foundry" layer: creates the GitHub connector the routine's
-# github_issue trigger uses (OAuth2, one-time interactive consent; registering the issue webhook needs it).
+# azd postprovision hook: creates the GitHub connector connection the routine's github_issue trigger uses
+# (OAuth2, one-time interactive consent; registering the issue webhook needs it).
 # The agent's code access is NOT this connector: that is the github-rest-mcp connection, see
 # scripts/register-github-mcp.ps1. The routine itself is created later by `azd deploy`.
+#
+# `azd ai connection create --connector-name github` (connections extension beta.11) does not attach the
+# connector gateway metadata, so the connection can never be consented. This script therefore follows the
+# documented REST flow: look the connector up in the Foundry Tools Catalog, PUT the connection with
+# metadata.type=gateway_connector, then mint the consent link.
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-function Test-Connected([string]$Name) {
-    $json = (& azd ai connection show $Name -o json 2>$null) -join "`n"
-    return ($json -match '"overallStatus"\s*:\s*"Connected"')
+foreach ($v in 'AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP', 'AZURE_AI_ACCOUNT_NAME', 'AZURE_AI_PROJECT_NAME', 'AZURE_TENANT_ID') {
+    if (-not (Get-Item "env:$v" -ErrorAction SilentlyContinue)) { throw "$v is not set (run azd provision first)." }
 }
 
 $name = 'github-conn'
-if (Test-Connected $name) { Write-Host "Connection '$name' is already Connected."; return }
+$connector = 'github'
+$apiVersion = '2025-04-01-preview'
+$base = "https://management.azure.com/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$env:AZURE_RESOURCE_GROUP" +
+    "/providers/Microsoft.CognitiveServices/accounts/$env:AZURE_AI_ACCOUNT_NAME/projects/$env:AZURE_AI_PROJECT_NAME" +
+    "/connections/$name"
+$url = "${base}?api-version=$apiVersion"
+$tmp = Join-Path ([IO.Path]::GetTempPath()) "setup-connections-$PID"
+New-Item -ItemType Directory -Force $tmp | Out-Null
 
-Write-Host "Creating connection '$name' (connector 'github')..."
-& azd ai connection create $name --connector-name github --force
-if ($LASTEXITCODE -ne 0) { throw "azd ai connection create failed (exit $LASTEXITCODE)" }
-
-for ($i = 0; $i -lt 60; $i++) {
-    if (Test-Connected $name) { Write-Host "Connection '$name' is Connected."; return }
-    if ($i -eq 0) {
-        Write-Host ""
-        Write-Host "== Authorize GitHub for connection '$name' ==" -ForegroundColor Yellow
-        Write-Host "Open the consent URL below in a browser, sign in to GitHub and approve."
-        Write-Host "(The account needs admin rights on the watched repo to register the issue webhook.)"
-        & azd ai connection show $name
-    }
-    Start-Sleep -Seconds 5
+function Get-Status {
+    $s = az rest --method get --url $url --query properties.overallStatus -o tsv 2>$null
+    return $(if ($LASTEXITCODE -eq 0) { $s } else { $null })
 }
-throw "Timed out waiting for consent on connection '$name'. Re-run: azd hooks run postprovision"
+
+try {
+    if ((Get-Status) -eq 'Connected') { Write-Host "Connection '$name' is already Connected."; return }
+
+    # 1. Catalog lookup (served from eastus regardless of the project region).
+    Write-Host "Looking up connector '$connector' in the Foundry Tools Catalog..."
+    @{
+        freeTextSearch = '*'
+        filters        = @(
+            @{ field = 'entityContainerId'; operator = 'eq'; values = @('connectors-registry-prod-bl') }
+            @{ field = 'type'; operator = 'eq'; values = @('tools') }
+            @{ field = 'kind'; operator = 'eq'; values = @('Versioned') }
+            @{ field = 'labels'; operator = 'eq'; values = @('latest') }
+            @{ field = 'annotations/name'; operator = 'eq'; values = @($connector) }
+        )
+        includeTotalResultCount = $true
+        pageSize               = 1
+    } | ConvertTo-Json -Depth 6 | Set-Content "$tmp/catalog.json" -Encoding utf8
+    $entityId = az rest --method post --resource https://ai.azure.com `
+        --url 'https://eastus.api.azureml.ms/asset-gallery/v1.0/tools' `
+        --headers 'Content-Type=application/json' 'x-ms-user-agent=AzureMachineLearningWorkspacePortal/12.0' `
+        --body "@$tmp/catalog.json" --query 'value[0].entityId' -o tsv
+    if ($LASTEXITCODE -ne 0 -or -not $entityId) { throw "Connector '$connector' not found in the Foundry Tools Catalog." }
+
+    # 2. Create the connection (target is a placeholder the platform rewrites once actions are registered).
+    Write-Host "Creating connection '$name'..."
+    @{
+        properties = @{
+            authType      = 'OAuth2'
+            category      = 'RemoteTool'
+            connectorName = $connector
+            target        = 'https://placeholder'
+            credentials   = @{}
+            peRequirement = 'NotRequired'
+            metadata      = @{
+                type                 = 'gateway_connector'
+                toolEntityId         = $entityId
+                connectionproperties = (@{ connectorName = $connector } | ConvertTo-Json -Compress)
+            }
+        }
+    } | ConvertTo-Json -Depth 6 | Set-Content "$tmp/conn.json" -Encoding utf8
+    az rest --method put --url $url --headers 'Content-Type=application/json' --body "@$tmp/conn.json" -o none
+    if ($LASTEXITCODE -ne 0) { throw 'Connection creation failed.' }
+
+    # 3. Consent link for the signed-in user.
+    $oid = az ad signed-in-user show --query id -o tsv
+    @{ parameters = @(@{ objectId = $oid; parameterName = 'token'; redirectUrl = 'https://ai.azure.com/nextgen/authConsentPopup'; tenantId = $env:AZURE_TENANT_ID }) } |
+        ConvertTo-Json -Depth 6 | Set-Content "$tmp/consent.json" -Encoding utf8
+    # POST .../connections/<name>/listConsentLinks (api-version via --url-parameters: az is a .cmd shim and
+    # cmd.exe would split a literal "&" in the URL).
+    $link = az rest --method post --url "$base/listConsentLinks" --url-parameters "api-version=$apiVersion" --headers 'Content-Type=application/json' `
+        --body "@$tmp/consent.json" --query 'value[0].link' -o tsv
+    if ($LASTEXITCODE -ne 0 -or -not $link) { throw 'Could not get the GitHub consent link.' }
+
+    Write-Host ""
+    Write-Host "== Authorize GitHub for connection '$name' ==" -ForegroundColor Yellow
+    Write-Host "Open this URL in a browser, sign in to GitHub and approve (the page ends blank when it worked)."
+    Write-Host "The account needs admin rights on the watched repo to register the issue webhook."
+    Write-Host $link
+
+    for ($i = 0; $i -lt 60; $i++) {
+        if ((Get-Status) -eq 'Connected') { Write-Host "Connection '$name' is Connected."; return }
+        Start-Sleep -Seconds 5
+    }
+    # The docs say the status only flips to Connected once actions are registered too, which a trigger-only
+    # connection never does, so do not fail the deployment here; the routine creation will show if consent is missing.
+    Write-Warning "Connection '$name' still reports '$(Get-Status)' after 5 minutes. Continuing; if routine creation fails, re-run: azd hooks run postprovision"
+}
+finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+}

@@ -1,12 +1,12 @@
 #!/bin/sh
-# azd postprovision hook of the "github-mcp" layer: puts the GitHub PAT into Key Vault (secret 'github-pat').
+# azd postprovision hook: puts the GitHub PAT into Key Vault (secret 'github-pat').
 # The Function App reads it through a Key Vault reference with its managed identity.
 #   GITHUB_PAT  fine-grained PAT, read-only (Contents, Issues, Metadata) on the watched repo.
 #               If unset you are prompted, unless the secret already exists (re-provision keeps it).
 # The PAT is piped straight into Key Vault; it is never written to disk or the azd environment.
 set -eu
 
-: "${GITHUB_MCP_KEY_VAULT_NAME:?not set (provision the github-mcp layer first)}"
+: "${GITHUB_MCP_KEY_VAULT_NAME:?not set (run azd provision first)}"
 VAULT="$GITHUB_MCP_KEY_VAULT_NAME"
 
 if [ -z "${GITHUB_PAT:-}" ]; then

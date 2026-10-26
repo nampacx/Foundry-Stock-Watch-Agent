@@ -8,7 +8,7 @@ GitHub issue opened
       ▼
 Foundry routine "on-issue-opened"  ── issue payload as input ─▶  hosted agent "triage-agent"
                                                                    │  Responses protocol, C# / Agent Framework
-                                                                   │  model: MAI-Thinking-1
+                                                                   │  model: gpt-6-luna
                                                                    ▼
                                            toolbox "gh-triage-tools" (MCP)  ──▶  Azure Function MCP server (github-rest-mcp)
                                                                    │                                     │  PAT from Key Vault (managed identity)
@@ -20,9 +20,9 @@ Foundry routine "on-issue-opened"  ── issue payload as input ─▶  hosted 
 
 | Piece | Where |
 | --- | --- |
-| Foundry account, project, model deployment | `azure.yaml` (`ai-project` service, `foundry` layer with the `microsoft.foundry` provider), no Bicep needed |
+| Foundry account, project, model deployment, ACR | `infra/main.bicep` + `infra/resources.bicep` (one resource group, shared with the GitHub MCP server) |
 | Hosted agent | `src/triage-agent` (`Program.cs`, `Support.cs`, `Dockerfile`) |
-| GitHub MCP server (REST wrapper) | `src/github-mcp` (Azure Functions MCP extension), `infra/github-mcp/` (Bicep layer: Function App, Key Vault, RBAC), `scripts/store-github-pat.*`, `scripts/register-github-mcp.*` |
+| GitHub MCP server (REST wrapper) | `src/github-mcp` (Azure Functions MCP extension), `infra/resources.bicep` (Function App, Key Vault, RBAC), `scripts/store-github-pat.*`, `scripts/register-github-mcp.*` |
 | GitHub connection + toolbox | `scripts/setup-connections.*`, `scripts/register-github-mcp.*`, `routines/toolbox.yaml` |
 | Routine | `routines/on-issue-opened.yaml`, registered as azd service `on-issue-opened` (`host: azure.ai.routine`) |
 
@@ -35,6 +35,7 @@ The original idea was to use the project **managed identity** for the GitHub con
 The Foundry-managed GitHub MCP connector (`foundrygithubmcp`, OAuth) reported *unauthenticated* in practice, and MCP calls only worked through a toolbox connection. So the agent no longer uses it. Instead `src/github-mcp` is an **MCP server on Azure Functions** that wraps the GitHub REST API:
 
 - Tools (read-only): `get_file_contents`, `search_code`, `get_issue`, `list_issues`, `search_issues`, `list_commits`.
+- Results are compacted (issue/commit/code-hit fields only, bodies and output capped) so they do not flood the model context. With `ALLOWED_REPO` set (azd passes `GITHUB_OWNER/GITHUB_REPOSITORY` to the Function App) the server rejects any other repository and any `repo:`/`org:`/`user:` search qualifier, independent of the agent prompt.
 - The **GitHub PAT lives in Key Vault** (`github-pat`). The Function App reads it through a Key Vault reference with its system-assigned managed identity (`Key Vault Secrets User`); the PAT is not in code, app settings values, the azd environment or the repo.
 - The Function endpoint (`/runtime/webhooks/mcp`) is protected by the MCP extension system key. After `azd deploy` of the function, the `postdeploy` hook registers it as Foundry connection `github-rest-mcp` (`custom-keys`, header `x-functions-key`) and creates the toolbox that exposes it to the agent. The agent code is unchanged.
 - The routine trigger still uses the OAuth connector `github-conn`: registering the issue webhook needs it and it is unrelated to the MCP path.
@@ -43,8 +44,8 @@ Everything is driven by azd (`azure.yaml`):
 
 | Step | What |
 | --- | --- |
-| `infra.layers.foundry` | Foundry account/project/model (microsoft.foundry provider); hook creates `github-conn` (consent) |
-| `infra.layers.github-mcp` | `infra/github-mcp`: resource group, Function App (Flex Consumption), Key Vault, RBAC; hook `store-github-pat` writes the PAT |
+| `infra` (`infra/main.bicep`) | One resource group: Foundry account/project/model, ACR, GitHub MCP Function App (Flex Consumption), Key Vault, RBAC |
+| `postprovision` hooks | `setup-connections` creates `github-conn` (consent); `store-github-pat` writes the PAT to Key Vault |
 | service `github-mcp` (`host: function`) | `azd deploy` publishes `src/github-mcp`; `postdeploy` hook `register-github-mcp` creates the connection + toolbox |
 | service `triage-agent` | `uses` `github-mcp`, so it deploys after the toolbox exists |
 
@@ -62,7 +63,7 @@ Run it locally: copy `src/github-mcp/local.settings.json.example` to `local.sett
 - Azure CLI (`az`, logged in; the hooks use it for Key Vault and the Function key) and the [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local) only for local runs.
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for local builds. Docker is **not** required: the image is built remotely in ACR (`remoteBuild: true`).
 - A GitHub account with **admin rights on the watched repository** (needed to register the issue webhook).
-- **Quota for `MAI-Thinking-1`** (preview, Global Standard). The default tier is 0 TPM, so request quota first. Fallback: see "Switching models".
+- **Quota for `gpt-6-luna`** (Global Standard, capacity 10 in `infra/main.parameters.json`).
 
 ## Deploy
 
@@ -74,8 +75,8 @@ azd up
 
 `azd up` does the following:
 
-1. **provision**: creates the Foundry account, project, and the model deployment.
-2. **postprovision hooks**: the `foundry` layer creates `github-conn` (routine trigger; prints a GitHub consent URL to open and approve); the `github-mcp` layer provisions the Function App + Key Vault and stores your PAT.
+1. **provision**: creates the resource group with the Foundry account, project, model deployment, ACR, and the GitHub MCP Function App + Key Vault.
+2. **postprovision hooks**: `setup-connections` creates `github-conn` (routine trigger; prints a GitHub consent URL to open and approve), then `store-github-pat` stores your PAT.
 3. **deploy**: publishes the GitHub MCP function, then its hook registers the `github-rest-mcp` connection and the `gh-triage-tools` toolbox; then builds and publishes the hosted agent `triage-agent` and creates the routine `on-issue-opened`.
 
 To watch a different repo, edit `owner`/`repository` in `routines/on-issue-opened.yaml` and `GITHUB_OWNER`/`GITHUB_REPOSITORY` in `azure.yaml`.
@@ -99,7 +100,7 @@ cd src/triage-agent && dotnet run
 
 ## Switching models
 
-`MAI-Thinking-1` supports Chat Completions only (served at `{account}/mai/v1`), so the agent uses `MODEL_API=chat`. To use another model, e.g. `gpt-6-luna` (2026-09-22): replace the deployment in `azure.yaml`, set `AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna` and `MODEL_API: responses`, then `azd up`. A commented example is in `azure.yaml`.
+The agent uses `gpt-6-luna` (2026-09-22) via the Responses API (`MODEL_API=responses`). The deployment is defined in `infra/main.parameters.json`; to use another model, change it there and in `azure.yaml` (`AZURE_AI_MODEL_DEPLOYMENT_NAME`, `MODEL_API`). `MAI-Thinking-1` supports Chat Completions only (`MODEL_API=chat`) and needs quota requested first.
 
 ## Safety notes
 
@@ -109,9 +110,9 @@ cd src/triage-agent && dotnet run
 ## Clean up
 
 ```bash
-azd down --purge   # both layers; --purge also purges the soft-deleted Key Vault
+azd down --purge   # removes the resource group; --purge also purges the soft-deleted Key Vault
 ```
 
 ## Status
 
-Routines, hosted agents, toolboxes and the `azd ai` extensions are in preview; flags and manifest field names change between releases (for example the azd routine manifest uses `connectionId`/`issueEvent`/`agentName`, not the REST snake_case names). This sample has been statically checked only (the Function project and Bicep were not compiled in the authoring environment); a full `azd up` against a subscription has not been run yet.
+Routines, hosted agents, toolboxes and the `azd ai` extensions are in preview; flags and manifest field names change between releases (for example the azd routine manifest uses `connectionId`/`issueEvent`/`agentName`, not the REST snake_case names). Both .NET projects and the Bicep build locally; a full `azd up` against a subscription has not been run yet. On the first run check the agent log line `Toolbox 'gh-triage-tools': N tools, M allowed` (M must be > 0), that the Foundry project accepts the agent/toolbox/routine calls (the template grants the deploying user *Azure AI User*; the hosted agent's own identity is created by the platform), and that `azd provision` does not conflict with the deployments declared in `azure.yaml`.

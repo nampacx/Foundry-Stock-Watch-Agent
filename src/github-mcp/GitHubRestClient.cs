@@ -31,17 +31,17 @@ public sealed class GitHubRestClient(HttpClient http)
         return $"GitHub API error {(int)resp.StatusCode} {resp.ReasonPhrase}: {detail}";
     }
 
-    public Task<string> GetIssue(string owner, string repo, int number, CancellationToken ct) =>
-        Guard(owner, repo) ?? GetAsync($"repos/{owner}/{repo}/issues/{number}", ct);
+    public async Task<string> GetIssue(string owner, string repo, int number, CancellationToken ct) =>
+        await (Guard(owner, repo) ?? Fetch($"repos/{owner}/{repo}/issues/{number}", e => Issue(e, MaxSingleIssueBodyChars), ct));
 
     public Task<string> ListIssues(string owner, string repo, string state, int perPage, CancellationToken ct) =>
-        Guard(owner, repo) ?? GetAsync($"repos/{owner}/{repo}/issues?state={Uri.EscapeDataString(state)}&per_page={Clamp(perPage)}", ct);
+        Guard(owner, repo) ?? Fetch($"repos/{owner}/{repo}/issues?state={Uri.EscapeDataString(state)}&per_page={Clamp(perPage)}", e => Issue(e, MaxIssueBodyChars), ct);
 
     public Task<string> SearchCode(string owner, string repo, string query, int perPage, CancellationToken ct) =>
-        Guard(owner, repo) ?? GetAsync($"search/code?q={Uri.EscapeDataString($"{query} repo:{owner}/{repo}")}&per_page={Clamp(perPage)}", ct);
+        Guard(owner, repo, query) ?? Fetch($"search/code?q={Uri.EscapeDataString($"{query} repo:{owner}/{repo}")}&per_page={Clamp(perPage)}", CodeHit, ct);
 
     public Task<string> SearchIssues(string owner, string repo, string query, int perPage, CancellationToken ct) =>
-        Guard(owner, repo) ?? GetAsync($"search/issues?q={Uri.EscapeDataString($"{query} repo:{owner}/{repo}")}&per_page={Clamp(perPage)}", ct);
+        Guard(owner, repo, query) ?? Fetch($"search/issues?q={Uri.EscapeDataString($"{query} repo:{owner}/{repo}")}&per_page={Clamp(perPage)}", e => Issue(e, MaxIssueBodyChars), ct);
 
     public Task<string> ListCommits(string owner, string repo, string? path, string? sha, int perPage, CancellationToken ct)
     {
@@ -49,8 +49,11 @@ public sealed class GitHubRestClient(HttpClient http)
         string url = $"repos/{owner}/{repo}/commits?per_page={Clamp(perPage)}";
         if (!string.IsNullOrWhiteSpace(path)) url += $"&path={Uri.EscapeDataString(path)}";
         if (!string.IsNullOrWhiteSpace(sha)) url += $"&sha={Uri.EscapeDataString(sha)}";
-        return GetAsync(url, ct);
+        return Fetch(url, Commit, ct);
     }
+
+    private async Task<string> Fetch(string url, Func<JsonElement, object> map, CancellationToken ct) =>
+        Project(await GetAsync(url, ct), map);
 
     /// <summary>File → decoded text (truncated); directory → compact listing of entries.</summary>
     public async Task<string> GetFileContents(string owner, string repo, string path, string? @ref, CancellationToken ct)
@@ -96,6 +99,82 @@ public sealed class GitHubRestClient(HttpClient http)
 
     private static int Clamp(int perPage) => Math.Clamp(perPage <= 0 ? 20 : perPage, 1, 50);
 
-    private static Task<string>? Guard(string owner, string repo) =>
-        ValidName(owner) && ValidName(repo) ? null : Task.FromResult("Invalid owner or repository name.");
+    // Optional server-side scope ("owner/repo", app setting ALLOWED_REPO). The agent prompt already says to stay
+    // on one repository, but issue text is untrusted, so the server enforces it too.
+    private static readonly string? AllowedRepo = Environment.GetEnvironmentVariable("ALLOWED_REPO") is { Length: > 0 } r ? r.Trim() : null;
+
+    private static readonly string[] ScopeQualifiers = ["repo:", "org:", "user:", "owner:"];
+
+    private static Task<string>? Guard(string owner, string repo, string? query = null)
+    {
+        if (!ValidName(owner) || !ValidName(repo)) return Task.FromResult("Invalid owner or repository name.");
+        if (AllowedRepo is not null)
+        {
+            if (!string.Equals($"{owner}/{repo}", AllowedRepo, StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult($"Access is limited to {AllowedRepo}.");
+            if (query is not null && ScopeQualifiers.Any(q => query.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                return Task.FromResult("Search qualifiers repo:/org:/user: are not allowed; the search is already scoped to the repository.");
+        }
+        return null;
+    }
+
+    // --- Compact projections: the model needs titles, locations and short bodies, not GitHub's full JSON. ---
+    private const int MaxIssueBodyChars = 1_500;
+    private const int MaxSingleIssueBodyChars = 8_000;
+    private const int MaxOutputChars = 40_000;
+
+    private static string Trunc(string? s, int max) =>
+        s is null ? "" : s.Length <= max ? s : s[..max] + "…[truncated]";
+
+    private static string? Str(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    private static object Issue(JsonElement e, int bodyMax) => new
+    {
+        number = e.GetProperty("number").GetInt32(),
+        title = Str(e, "title"),
+        state = Str(e, "state"),
+        is_pull_request = e.TryGetProperty("pull_request", out _),
+        author = e.TryGetProperty("user", out var u) && u.ValueKind == JsonValueKind.Object ? Str(u, "login") : null,
+        labels = e.TryGetProperty("labels", out var l) && l.ValueKind == JsonValueKind.Array
+            ? l.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.Object ? Str(x, "name") : x.GetString()).ToArray()
+            : [],
+        created_at = Str(e, "created_at"),
+        updated_at = Str(e, "updated_at"),
+        url = Str(e, "html_url"),
+        body = Trunc(Str(e, "body"), bodyMax),
+    };
+
+    private static object CodeHit(JsonElement e) => new { name = Str(e, "name"), path = Str(e, "path"), url = Str(e, "html_url") };
+
+    private static object Commit(JsonElement e)
+    {
+        string message = e.TryGetProperty("commit", out var c) ? Str(c, "message") ?? "" : "";
+        int nl = message.IndexOf('\n');
+        return new
+        {
+            sha = (Str(e, "sha") ?? "")[..Math.Min(7, (Str(e, "sha") ?? "").Length)],
+            message = Trunc(nl >= 0 ? message[..nl] : message, 200),
+            author = c.ValueKind == JsonValueKind.Object && c.TryGetProperty("author", out var a) ? Str(a, "name") : null,
+            date = c.ValueKind == JsonValueKind.Object && c.TryGetProperty("author", out var a2) ? Str(a2, "date") : null,
+            url = Str(e, "html_url"),
+        };
+    }
+
+    /// <summary>Maps a REST list (or a search result's "items") to compact JSON; errors pass through untouched.</summary>
+    private static string Project(string body, Func<JsonElement, object> map)
+    {
+        if (body.StartsWith("GitHub API error", StringComparison.Ordinal)) return body;
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement root = doc.RootElement;
+        int? total = null;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("items", out JsonElement items))
+        {
+            total = root.TryGetProperty("total_count", out var t) ? t.GetInt32() : null;
+            root = items;
+        }
+        object[] mapped = root.ValueKind == JsonValueKind.Array ? root.EnumerateArray().Select(map).ToArray() : [map(root)];
+        string json = JsonSerializer.Serialize(total is null ? (object)mapped : new { total_count = total, items = mapped });
+        return Trunc(json, MaxOutputChars);
+    }
 }
