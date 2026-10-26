@@ -14,7 +14,7 @@ $name = 'github-conn'
 if (Test-Connected $name) { Write-Host "Connection '$name' is already Connected."; return }
 
 Write-Host "Creating connection '$name' (connector 'github')..."
-& azd ai connection create $name --connector-name github --force
+& azd ai connection create $name --auth-type oauth2 --connector-name github --force
 if ($LASTEXITCODE -ne 0) { throw "azd ai connection create failed (exit $LASTEXITCODE)" }
 
 for ($i = 0; $i -lt 60; $i++) {

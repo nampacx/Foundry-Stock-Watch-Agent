@@ -17,7 +17,7 @@ if is_connected "$name"; then
 fi
 
 echo "Creating connection '$name' (connector 'github')..."
-azd ai connection create "$name" --connector-name github --force
+azd ai connection create "$name" --auth-type oauth2 --connector-name github --force
 
 i=0
 while [ "$i" -lt 60 ]; do
