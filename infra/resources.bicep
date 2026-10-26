@@ -1,7 +1,5 @@
 // Everything in one resource group: Foundry (account, project, model deployments, ACR) and the
-// GitHub REST -> MCP wrapper (Function App on Flex Consumption + Key Vault holding the PAT).
-// The app's system-assigned identity reads the secret through a Key Vault reference; no secret is in the template.
-// The secret itself (github-pat) is written by the postprovision hook, never via template parameters.
+// GitHub REST -> MCP wrapper (Function App on Flex Consumption). The PAT is a secure parameter stored as an app setting.
 targetScope = 'resourceGroup'
 
 param location string
@@ -11,11 +9,14 @@ param resourceTokenSalt string = ''
 param foundryProjectName string
 param deployments array = []
 
-@description('Object id of the person/pipeline that stores the PAT (gets Key Vault Secrets Officer). Optional.')
-#disable-next-line secure-secrets-in-params // an object id, not a secret
-param secretsOfficerPrincipalId string = ''
-#disable-next-line secure-secrets-in-params // 'User' | 'ServicePrincipal', not a secret
-param secretsOfficerPrincipalType string = 'User'
+@description('Object id of the person/pipeline that runs azd; gets Azure AI User on the Foundry account. Optional.')
+param principalId string = ''
+param principalType string = 'User'
+
+@secure()
+@minLength(1)
+@description('Read-only fine-grained GitHub PAT, stored as an app setting of the Function App.')
+param githubPat string
 
 @description('Optional "owner/repo" the MCP server is restricted to (ALLOWED_REPO). Empty = any repository the PAT can read.')
 param allowedRepo string = ''
@@ -29,10 +30,8 @@ var acrName = 'cr${foundryToken}'
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var funcName = 'func-ghmcp-${resourceToken}'
-var kvName = 'kv-ghmcp-${take(resourceToken, 8)}'
 var storageName = 'stghmcp${take(resourceToken, 10)}'
 var deployContainer = 'app-package'
-var patSecretName = 'github-pat' // written by scripts/store-github-pat.*
 
 // --- Foundry ---
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
@@ -125,19 +124,6 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
-resource kv 'Microsoft.KeyVault/vaults@2024-11-01' = {
-  name: kvName
-  location: location
-  tags: tags
-  properties: {
-    sku: { family: 'A', name: 'standard' }
-    tenantId: subscription().tenantId
-    enableRbacAuthorization: true
-    enableSoftDelete: true
-    softDeleteRetentionInDays: 7
-  }
-}
-
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${funcName}'
   location: location
@@ -172,7 +158,6 @@ resource func 'Microsoft.Web/sites@2024-04-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
-    keyVaultReferenceIdentity: 'SystemAssigned'
     functionAppConfig: {
       deployment: {
         storage: {
@@ -188,9 +173,8 @@ resource func 'Microsoft.Web/sites@2024-04-01' = {
       appSettings: [
         { name: 'AzureWebJobsStorage__accountName', value: storage.name }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appi.properties.ConnectionString }
-        // Key Vault reference, unversioned so a rotated secret is picked up automatically (within ~24h, or on restart).
         { name: 'ALLOWED_REPO', value: allowedRepo }
-        { name: 'GITHUB_PAT', value: '@Microsoft.KeyVault(VaultName=${kv.name};SecretName=${patSecretName})' }
+        { name: 'GITHUB_PAT', value: githubPat }
       ]
     }
   }
@@ -199,22 +183,10 @@ resource func 'Microsoft.Web/sites@2024-04-01' = {
 // --- RBAC ---
 var roles = {
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-  kvSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
-  kvSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   storageBlobOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
   storageQueueContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
   storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
-}
-
-resource funcReadsSecret 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: kv
-  name: guid(kv.id, func.id, roles.kvSecretsUser)
-  properties: {
-    principalId: func.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.kvSecretsUser)
-  }
 }
 
 resource funcUsesStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -248,30 +220,19 @@ resource funcUsesStorageQueues 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
-resource officer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(secretsOfficerPrincipalId)) {
-  scope: kv
-  name: guid(kv.id, secretsOfficerPrincipalId, roles.kvSecretsOfficer)
-  properties: {
-    principalId: secretsOfficerPrincipalId
-    principalType: secretsOfficerPrincipalType
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.kvSecretsOfficer)
-  }
-}
-
 // The deploying user creates agents, connections, toolboxes and routines in the project (azd ai ...), which
 // needs data-plane rights on the Foundry account.
-resource userAzureAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(secretsOfficerPrincipalId)) {
+resource userAzureAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(principalId)) {
   scope: foundryAccount
-  name: guid(foundryAccount.id, secretsOfficerPrincipalId, roles.azureAiUser)
+  name: guid(foundryAccount.id, principalId, roles.azureAiUser)
   properties: {
-    principalId: secretsOfficerPrincipalId
-    principalType: secretsOfficerPrincipalType
+    principalId: principalId
+    principalType: principalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.azureAiUser)
   }
 }
 
 output functionAppName string = func.name
-output keyVaultName string = kv.name
 output mcpEndpoint string = 'https://${func.properties.defaultHostName}/runtime/webhooks/mcp'
 
 output AZURE_AI_PROJECT_ID string = foundryAccount::project.id

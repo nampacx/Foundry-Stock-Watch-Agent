@@ -1,5 +1,5 @@
 # Toolbox exposing our own GitHub MCP server (Azure Function wrapping the GitHub REST API,
-# PAT in Key Vault, registered as the custom-keys connection "github-rest-mcp") as one MCP endpoint:
+# PAT in the app settings, registered as the custom-keys connection "github-rest-mcp") as one MCP endpoint:
 # {project}/toolboxes/gh-triage-tools/mcp
 name: gh-triage-tools
 description: Read-only GitHub repository tools for bug triage

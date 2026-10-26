@@ -9,9 +9,7 @@ var builder = FunctionsApplication.CreateBuilder(args);
 builder.Services.AddApplicationInsightsTelemetryWorkerService();
 builder.Services.ConfigureFunctionsApplicationInsights();
 
-// GITHUB_PAT is an app setting. In Azure it is a Key Vault reference
-// (@Microsoft.KeyVault(SecretUri=...)) resolved by the platform with the app's managed identity,
-// so the PAT never appears in code, config files or deployment history.
+// GITHUB_PAT is an app setting (local.settings.json locally; set by infra/resources.bicep in Azure).
 builder.Services.AddHttpClient<GitHubRestClient>(client =>
 {
     string pat = Environment.GetEnvironmentVariable("GITHUB_PAT")

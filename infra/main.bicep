@@ -1,5 +1,5 @@
 // Single azd deployment: one resource group holding the Foundry account/project/model/ACR and the
-// GitHub REST -> MCP Function App with its Key Vault. Outputs are written to the azd environment and
+// GitHub REST -> MCP Function App. Outputs are written to the azd environment and
 // consumed by azure.yaml (services, github-mcp service lookup) and the hook scripts.
 targetScope = 'subscription'
 
@@ -21,9 +21,14 @@ param foundryProjectName string
 @description('Model deployments on the Foundry account.')
 param deployments array = []
 
-@description('Object id of the signed-in user/pipeline; granted Key Vault Secrets Officer (store the PAT) and Azure AI User on the Foundry account.')
+@description('Object id of the signed-in user/pipeline; granted Azure AI User on the Foundry account.')
 param principalId string = ''
 param principalType string = 'User'
+
+@secure()
+@minLength(1)
+@description('Read-only fine-grained GitHub PAT; stored as an app setting of the Function App.')
+param githubPat string
 
 @description('Optional "owner/repo" the GitHub MCP server is restricted to.')
 param allowedRepo string = ''
@@ -50,8 +55,9 @@ module resources 'resources.bicep' = {
     foundryProjectName: foundryProjectName
     deployments: deployments
     allowedRepo: allowedRepo
-    secretsOfficerPrincipalId: principalId
-    secretsOfficerPrincipalType: principalType
+    githubPat: githubPat
+    principalId: principalId
+    principalType: principalType
   }
 }
 
@@ -67,5 +73,4 @@ output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = resources.outputs.AZURE_CON
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = resources.outputs.AZURE_AI_PROJECT_ACR_CONNECTION_NAME
 output GITHUB_MCP_RESOURCE_GROUP string = rg.name
 output GITHUB_MCP_FUNCTION_NAME string = resources.outputs.functionAppName
-output GITHUB_MCP_KEY_VAULT_NAME string = resources.outputs.keyVaultName
 output GITHUB_MCP_ENDPOINT string = resources.outputs.mcpEndpoint

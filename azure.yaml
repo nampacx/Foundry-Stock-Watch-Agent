@@ -57,7 +57,7 @@ services:
       - github-mcp
     kind: hosted
     name: triage-agent
-    description: Triages new GitHub issues by reading the repository code through a toolbox backed by our own GitHub REST MCP server (PAT in Key Vault).
+    description: Triages new GitHub issues by reading the repository code through a toolbox backed by our own GitHub REST MCP server (PAT in the Function App settings).
     protocols:
       - protocol: responses
         version: 2.0.0
@@ -81,28 +81,29 @@ services:
     $ref: ./routines/on-issue-opened.yaml
 
 # One Bicep deployment (infra/main.bicep): a single resource group with the Foundry account/project/model/ACR
-# and the GitHub MCP Function App + Key Vault. `azd down` removes it; add --purge for the soft-deleted vault.
+# and the GitHub MCP Function App. `azd down` removes it.
 infra:
   provider: bicep
   path: infra
 
 hooks:
+  preprovision:
+    # Asks for the GitHub PAT once (stored in the azd environment) so Bicep can set it on the Function App.
+    windows:
+      shell: pwsh
+      run: ./scripts/ensure-github-pat.ps1
+      interactive: true
+    posix:
+      shell: sh
+      run: ./scripts/ensure-github-pat.sh
+      interactive: true
   postprovision:
-    # 1. Creates the routine's GitHub OAuth connector (one-time consent).
-    - windows:
-        shell: pwsh
-        run: ./scripts/setup-connections.ps1
-        interactive: true
-      posix:
-        shell: sh
-        run: ./scripts/setup-connections.sh
-        interactive: true
-    # 2. Stores the GitHub PAT in Key Vault.
-    - windows:
-        shell: pwsh
-        run: ./scripts/store-github-pat.ps1
-        interactive: true
-      posix:
-        shell: sh
-        run: ./scripts/store-github-pat.sh
-        interactive: true
+    # Creates the routine's GitHub OAuth connector (one-time consent).
+    windows:
+      shell: pwsh
+      run: ./scripts/setup-connections.ps1
+      interactive: true
+    posix:
+      shell: sh
+      run: ./scripts/setup-connections.sh
+      interactive: true
