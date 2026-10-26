@@ -12,7 +12,7 @@ Foundry routine "stockwatch-daily-review" (cron, weekdays 07:00 Europe/Berlin)
       ▼
 hosted agent "stockwatch-agent"  ── tool: run_stock_watch ──┐
                                                                    │ (deterministic C# job)
-  Table "companies" ──▶ for each company (max 3 in parallel):      │
+  Table "companies" ──▶ for each company (sequential by default):      │
                          inner agent + web search ─▶ company report │
                                                                    ▼
                           consolidated report ─▶ Blob  stockwatch-reports/yyyy/MM/analyst-report-yyyyMMdd-HHmmZ.md
@@ -55,7 +55,7 @@ Or edit rows in the Azure portal / Storage Explorer.
   azd extension install microsoft.foundry azure.ai.agents azure.ai.routines
   ```
 - Azure CLI (`az login`) for the seed script; [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for local builds. Docker is not needed (remote build in ACR).
-- Quota for `gpt-6-luna` (Global Standard, capacity 10).
+- Quota for `gpt-6-luna` (Global Standard, capacity 230).
 
 ## Deploy
 
@@ -89,14 +89,14 @@ cd src/stockwatch-agent && dotnet run
 | --- | --- |
 | Schedule | `cronExpression` / `timeZone` in `routines/stockwatch-daily-review.yaml` |
 | Model | `infra/main.parameters.json` + `azure.yaml` (`AZURE_AI_MODEL_DEPLOYMENT_NAME`) |
-| Parallelism | env `MAX_PARALLEL_COMPANIES` (default 3) |
+| Parallelism | env `MAX_PARALLEL_COMPANIES` (default 1) |
 | Report format / analyst prompt | `AnalystResearcher.Instructions`, `ReportComposer` in `Support.cs` |
 
 ## Notes and caveats
 
 - **Data quality:** analyst info comes from web search, not a licensed data feed. Every item carries its source link; check before acting. Reports are information for your own review, not investment advice. If you later want structured data, add a function tool for a provider (Finnhub, FMP) to `AnalystResearcher`.
 - **Identity:** storage access uses Entra only (shared keys are disabled). The hosted agent runs under its own instance identity, which only exists after `azd deploy`; the `postdeploy` hook `scripts/grant-agent-access.ps1` grants it *Storage Table Data Reader*, *Storage Blob Data Contributor* and *Azure AI User*. Re-run it by hand if you get 403s (needs Owner or User Access Administrator).
-- **Run time:** a run takes about (companies ÷ 3) × a few minutes. For long watchlists raise `MAX_PARALLEL_COMPANIES`, mind model rate limits, and check the routine/agent request timeout.
+- **Run time:** a run takes about (companies ÷ MAX_PARALLEL_COMPANIES) × a few minutes. For long watchlists raise `MAX_PARALLEL_COMPANIES`, mind model rate limits, and check the routine/agent request timeout.
 - **Telemetry:** the agent exports OpenTelemetry to the project's Application Insights (the platform injects `APPLICATIONINSIGHTS_CONNECTION_STRING` into the container, it is reserved and must not be set in `azure.yaml`; for local runs copy the `azd env get-values` output into `.env`). You get the model/agent spans (`gen_ai.*`), custom spans `analyst_review` and `research_company` (tag `stockwatch.ticker`), and metrics `stockwatch.companies.researched`, `stockwatch.companies.failed`, `stockwatch.company.duration`, `stockwatch.run.duration`. Prompt/response content is not captured. Example query (Logs, `customMetrics`): `customMetrics | where name startswith "stockwatch"`.
 - **Preview:** routines, hosted agents and the `azd ai` extensions are in preview; manifest field names change between releases (this repo uses `agentName`/`timeZone` camelCase as in the previous version's manifest; the docs' azd examples show `agent_name`/`time_zone`, so adjust if `azd deploy` rejects the routine). Only the C# project and the Bicep have been built locally; a full `azd up` has not been run.
 

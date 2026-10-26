@@ -13,7 +13,7 @@
         {
           "name": "gpt-6-luna",
           "model": { "name": "gpt-6-luna", "format": "OpenAI", "version": "2026-09-22" },
-          "sku": { "name": "GlobalStandard", "capacity": 10 }
+          "sku": { "name": "GlobalStandard", "capacity": 230 }
         }
       ]
     }

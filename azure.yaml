@@ -20,7 +20,7 @@ services:
           version: '2026-09-22'
         sku:
           name: GlobalStandard
-          capacity: 10
+          capacity: 230
 
   # The hosted analyst agent (C#, Microsoft Agent Framework, Responses protocol).
   stockwatch-agent:
@@ -41,6 +41,7 @@ services:
       AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna
       STORAGE_ACCOUNT_NAME: ${STORAGE_ACCOUNT_NAME}
       WATCHLIST_TABLE: ${WATCHLIST_TABLE}
+      MAX_PARALLEL_COMPANIES: '1'
       REPORTS_CONTAINER: ${REPORTS_CONTAINER}
     container:
       resources:

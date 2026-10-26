@@ -29,7 +29,7 @@ string storageAccount = Config.Required("STORAGE_ACCOUNT_NAME");
 string tableName = Config.Optional("WATCHLIST_TABLE", "watchlist")!;
 string partition = Config.Optional("WATCHLIST_PARTITION", "stocks")!;
 string reportsContainer = Config.Optional("REPORTS_CONTAINER", "stockwatch-reports")!;
-int maxParallel = int.Parse(Config.Optional("MAX_PARALLEL_COMPANIES", "3")!);
+int maxParallel = int.Parse(Config.Optional("MAX_PARALLEL_COMPANIES", "1")!);
 
 // The platform-provided identity in Foundry; developer credentials locally.
 TokenCredential credential = new DefaultAzureCredential();
