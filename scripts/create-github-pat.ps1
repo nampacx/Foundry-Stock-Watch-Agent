@@ -1,4 +1,4 @@
-# Guides you through creating the read-only fine-grained GitHub PAT the github-mcp layer needs.
+# Guides you through creating the read-only fine-grained GitHub PAT the github-mcp server needs.
 # GitHub has no API to mint PATs, so this opens the creation page pre-filled (name, owner, expiry, permissions),
 # then validates the token you paste against the watched repo and optionally stores it in Key Vault.
 #
@@ -21,7 +21,7 @@ if ($Store) {
     if ($line) { $VaultName = $line.Matches[0].Groups[1].Value }
   }
   if (-not $VaultName) {
-    throw "No Key Vault found. Run 'azd provision' (github-mcp layer) first, pass -VaultName <name>, or drop -Store and let the azd hook store the token."
+    throw "No Key Vault found. Run 'azd provision' first, pass -VaultName <name>, or drop -Store and let the azd hook store the token."
   }
   $env:GITHUB_MCP_KEY_VAULT_NAME = $VaultName
 }

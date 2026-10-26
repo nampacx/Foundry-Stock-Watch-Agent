@@ -11,33 +11,22 @@ name: foundry-gh-triage-agent
 
 services:
   # Foundry account + project + model deployment. Created by `azd provision`
-  # (the "foundry" layer, provider microsoft.foundry), no hand-written Bicep needed.
+  # (infra/main.bicep).
   ai-project:
     host: azure.ai.project
+    # Keep in sync with "deployments" in infra/main.parameters.json (Bicep creates the deployment, this tells
+    # azd/the agent extension which models the project has).
     deployments:
-      # Default: MAI-Thinking-1 (preview). Chat Completions only, Global Standard.
-      # NOTE: the default quota tier is 0 TPM; request quota before `azd provision`.
-      - name: MAI-Thinking-1
+      - name: gpt-6-luna
         model:
-          format: Microsoft
-          name: MAI-Thinking-1
-          version: '2026-06-01'
+          format: OpenAI
+          name: gpt-6-luna
+          version: '2026-09-22'
         sku:
           name: GlobalStandard
-          capacity: 1
-      # Fallback if MAI-Thinking-1 quota/availability is a problem:
-      #   1. replace the deployment above with this one
-      #   2. set AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna and MODEL_API: responses below
-      # - name: gpt-6-luna
-      #   model:
-      #     format: OpenAI
-      #     name: gpt-6-luna
-      #     version: '2026-09-22'
-      #   sku:
-      #     name: GlobalStandard
-      #     capacity: 10
+          capacity: 10
 
-  # GitHub REST -> MCP server on Azure Functions (Flex Consumption). Provisioned by the github-mcp layer
+  # GitHub REST -> MCP server on Azure Functions (Flex Consumption). Provisioned by infra/main.bicep
   # (the resource is matched by name through the outputs below), code deployed by `azd deploy`.
   # Deployed before triage-agent (which `uses` it): the postdeploy hook wires the Foundry connection + toolbox.
   github-mcp:
@@ -72,10 +61,8 @@ services:
       - protocol: responses
         version: 2.0.0
     env:
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: MAI-Thinking-1
-      # chat      = Chat Completions via {account}/mai/v1 (MAI-Thinking-1)
-      # responses = Foundry Responses API (gpt-* models)
-      MODEL_API: chat
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna
+      MODEL_API: responses
       TOOLBOX_NAME: gh-triage-tools
       GITHUB_OWNER: nampacx
       GITHUB_REPOSITORY: Foundry-GH-Triage-Agent
@@ -85,44 +72,36 @@ services:
         memory: 1Gi
 
   # The routine: GitHub "issue opened" -> triage-agent. Created by `azd deploy` after the agent.
-  # Depends on the "github-conn" connection created by the foundry layer's postprovision hook.
+  # Depends on the "github-conn" connection created by the postprovision hook.
   on-issue-opened:
     host: azure.ai.routine
     uses:
       - triage-agent
     $ref: ./routines/on-issue-opened.yaml
 
-# Two provisioning layers (azd layered provisioning, beta):
-#   foundry    : Foundry account/project/model, synthesized by the microsoft.foundry provider from the
-#                services above; its hook creates the routine's GitHub OAuth connector (one-time consent).
-#   github-mcp : own Bicep (infra/github-mcp): resource group, Function App for the GitHub REST MCP
-#                server, Key Vault for the PAT. Its hook stores the PAT in Key Vault.
-# `azd down` removes both layers (reverse order); use `azd down --purge` to also purge the soft-deleted vault.
+# One Bicep deployment (infra/main.bicep): a single resource group with the Foundry account/project/model/ACR
+# and the GitHub MCP Function App + Key Vault. `azd down` removes it; add --purge for the soft-deleted vault.
 infra:
-  layers:
-    - name: foundry
-      provider: microsoft.foundry
-      path: infra/foundry
-      hooks:
-        postprovision:
-          windows:
-            shell: pwsh
-            run: ./scripts/setup-connections.ps1
-            interactive: true
-          posix:
-            shell: sh
-            run: ./scripts/setup-connections.sh
-            interactive: true
-    - name: github-mcp
-      provider: bicep
-      path: infra/github-mcp
-      hooks:
-        postprovision:
-          windows:
-            shell: pwsh
-            run: ./scripts/store-github-pat.ps1
-            interactive: true
-          posix:
-            shell: sh
-            run: ./scripts/store-github-pat.sh
-            interactive: true
+  provider: bicep
+  path: infra
+
+hooks:
+  postprovision:
+    # 1. Creates the routine's GitHub OAuth connector (one-time consent).
+    - windows:
+        shell: pwsh
+        run: ./scripts/setup-connections.ps1
+        interactive: true
+      posix:
+        shell: sh
+        run: ./scripts/setup-connections.sh
+        interactive: true
+    # 2. Stores the GitHub PAT in Key Vault.
+    - windows:
+        shell: pwsh
+        run: ./scripts/store-github-pat.ps1
+        interactive: true
+      posix:
+        shell: sh
+        run: ./scripts/store-github-pat.sh
+        interactive: true

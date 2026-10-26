@@ -429,3 +429,6 @@ FodyWeavers.xsd
 
 # Local Functions settings (contain secrets)
 local.settings.json
+
+# azd extension logs
+azd-*.log

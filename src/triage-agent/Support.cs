@@ -27,7 +27,9 @@ internal static class Config
 /// </summary>
 internal static partial class ReadOnlyTools
 {
-    [GeneratedRegex("^(get|list|search|read)_", RegexOptions.IgnoreCase)]
+    // A toolbox may prefix tool names with the connection name (e.g. "github-rest-mcp___get_issue",
+    // "github-rest-mcp.get_issue"), so the verb may follow a separator instead of starting the name.
+    [GeneratedRegex("(^|[._:/-]|_{2,})(get|list|search|read)_", RegexOptions.IgnoreCase)]
     private static partial Regex ReadPrefix();
 
     public static bool IsAllowed(string toolName) => ReadPrefix().IsMatch(toolName);

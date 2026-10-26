@@ -1,6 +1,6 @@
 # PowerShell twin of store-github-pat.sh (see there for the description).
 $ErrorActionPreference = 'Stop'
-if (-not $env:GITHUB_MCP_KEY_VAULT_NAME) { throw 'GITHUB_MCP_KEY_VAULT_NAME is not set (provision the github-mcp layer first).' }
+if (-not $env:GITHUB_MCP_KEY_VAULT_NAME) { throw 'GITHUB_MCP_KEY_VAULT_NAME is not set (run azd provision first).' }
 $vault = $env:GITHUB_MCP_KEY_VAULT_NAME
 
 $pat = $env:GITHUB_PAT

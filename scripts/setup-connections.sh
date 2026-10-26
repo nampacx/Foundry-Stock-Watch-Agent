@@ -1,5 +1,5 @@
 #!/bin/sh
-# azd postprovision hook of the "foundry" layer: creates the GitHub connector the routine's
+# azd postprovision hook: creates the GitHub connector the routine's
 # github_issue trigger uses (OAuth2, one-time interactive consent; registering the issue webhook needs it).
 # The agent's code access is NOT this connector: that is the github-rest-mcp connection, see
 # scripts/register-github-mcp.sh. The routine itself is created later by `azd deploy`.
