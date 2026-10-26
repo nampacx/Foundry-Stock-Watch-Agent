@@ -36,13 +36,14 @@ services:
     resourceGroup: ${GITHUB_MCP_RESOURCE_GROUP}
     resourceName: ${GITHUB_MCP_FUNCTION_NAME}
     hooks:
+      # Service hooks run from the service folder (src/github-mcp), hence ../../scripts.
       postdeploy:
         windows:
           shell: pwsh
-          run: ./scripts/register-github-mcp.ps1
+          run: ../../scripts/register-github-mcp.ps1
         posix:
           shell: sh
-          run: ./scripts/register-github-mcp.sh
+          run: ../../scripts/register-github-mcp.sh
 
   # The hosted triage agent (C#, Microsoft Agent Framework, Responses protocol).
   triage-agent:
