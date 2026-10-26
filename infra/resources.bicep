@@ -165,7 +165,7 @@ var roles = {
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   monitoringReader: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
   storageBlobContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-  storageBlobReader: '2a2b9908-6bea-4ce4-a93e-9e6dd0b2b5a1'
+  storageBlobReader: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
   storageTableReader: '76199698-9eea-4c19-bc75-cec21354c6b6'
   storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 }
