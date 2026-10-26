@@ -5,7 +5,9 @@ using Microsoft.Extensions.Hosting;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 
-// GITHUB_PAT is an app setting (local.settings.json locally; set by infra/resources.bicep in Azure).
+// GITHUB_PAT is an app setting. In Azure it is a Key Vault reference (@Microsoft.KeyVault(...)) resolved by the
+// platform with the app's managed identity, so the PAT never appears in code, config files or deployment history.
+// Locally it comes from local.settings.json.
 // It is read when the client is first created, not at startup, so a missing value never blocks the host.
 builder.Services.AddHttpClient<GitHubRestClient>(client =>
 {

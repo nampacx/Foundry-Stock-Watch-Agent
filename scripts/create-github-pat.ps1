@@ -1,17 +1,30 @@
 # Guides you through creating the read-only fine-grained GitHub PAT the github-mcp server needs.
 # GitHub has no API to mint PATs, so this opens the creation page pre-filled (name, owner, expiry, permissions),
-# then validates the token you paste against the watched repo and optionally stores it in the azd environment.
+# then validates the token you paste against the watched repo and optionally stores it in Key Vault.
 #
 #   ./scripts/create-github-pat.ps1 -Owner nampacx -Repo my-repo [-ExpiresInDays 90] [-Store]
 #
-# -Store saves it with `azd env set GITHUB_PAT` (.azure/<env>/.env, git-ignored).
+# The token is never written to disk. -Store hands it to store-github-pat.ps1 via $env:GITHUB_PAT (this process only).
 param(
   [Parameter(Mandatory)] [string] $Owner,
   [Parameter(Mandatory)] [string] $Repo,
   [ValidateRange(1, 366)] [int] $ExpiresInDays = 90,
-  [switch] $Store
+  [switch] $Store,
+  [string] $VaultName
 )
 $ErrorActionPreference = 'Stop'
+
+if ($Store) {
+  if (-not $VaultName) { $VaultName = $env:GITHUB_MCP_KEY_VAULT_NAME }
+  if (-not $VaultName) {
+    $line = azd env get-values 2>$null | Select-String '^GITHUB_MCP_KEY_VAULT_NAME="?([^"]+)"?$'
+    if ($line) { $VaultName = $line.Matches[0].Groups[1].Value }
+  }
+  if (-not $VaultName) {
+    throw "No Key Vault found. Run 'azd provision' first, pass -VaultName <name>, or drop -Store and let the azd hook store the token."
+  }
+  $env:GITHUB_MCP_KEY_VAULT_NAME = $VaultName
+}
 
 $qs = @{
   name          = "foundry-gh-triage-$Repo"
@@ -47,9 +60,8 @@ if ($r.permissions.push -or $r.permissions.admin) {
 Write-Host "Token works for $Owner/$Repo (read access confirmed)."
 
 if ($Store) {
-  azd env set GITHUB_PAT $pat
-  if ($LASTEXITCODE -ne 0) { throw 'azd env set failed.' }
-  Write-Host 'Stored as GITHUB_PAT in the azd environment. Apply it with: azd provision'
+  $env:GITHUB_PAT = $pat
+  try { & (Join-Path $PSScriptRoot 'store-github-pat.ps1') } finally { Remove-Item Env:GITHUB_PAT -ErrorAction SilentlyContinue }
 } else {
-  Write-Host "Not stored. To use it: azd env set GITHUB_PAT <token>; azd provision   (or rerun with -Store)"
+  Write-Host "Not stored. To use it: `$env:GITHUB_PAT = '<token>'; azd provision github-mcp   (or rerun with -Store)"
 }

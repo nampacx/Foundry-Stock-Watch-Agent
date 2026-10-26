@@ -8,7 +8,6 @@
     "foundryProjectName": { "value": "${AZURE_AI_PROJECT_NAME=${AZURE_ENV_NAME}}" },
     "resourceTokenSalt": { "value": "${AZD_RESOURCE_TOKEN_SALT}" },
     "allowedRepo": { "value": "${GITHUB_OWNER=nampacx}/${GITHUB_REPOSITORY=Foundry-GH-Triage-Agent}" },
-    "githubPat": { "value": "${GITHUB_PAT}" },
     "principalId": { "value": "${AZURE_PRINCIPAL_ID=}" },
     "deployments": {
       "value": [
