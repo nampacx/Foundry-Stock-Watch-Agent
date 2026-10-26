@@ -6,9 +6,10 @@
 # `azd ai connection create --connector-name github` (connections extension beta.11) does not attach the
 # connector gateway metadata, so the connection can never be consented. This script therefore follows the
 # documented REST flow: look the connector up in the Foundry Tools Catalog, PUT the connection with
-# metadata.type=gateway_connector, register the GitHub issue operations (metadata.mcpserverConfigProperties),
-# then mint the consent link. Without the registered operations the platform never provisions the connector
-# gateway (target stays https://placeholder) and the github_issue trigger silently never fires.
+# metadata.type=gateway_connector, mint the consent link, and once consented register the GitHub issue operations
+# (metadata.mcpserverConfigProperties), as the Foundry portal does. Without the registered operations the platform
+# never provisions the connector gateway (target stays https://placeholder) and the github_issue trigger silently
+# never fires.
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -68,16 +69,23 @@ function Set-Connection([string]$EntityId, [string]$ConnectionProperties, [switc
     if ($LASTEXITCODE -ne 0) { throw 'Connection creation failed.' }
 }
 
+# Register the issue operations on an existing, consented connection. Like the Foundry portal, this runs after
+# consent and echoes back the connectionproperties the platform stored (they gain the consent parameterValues).
+# No-op when the operations are already registered.
+function Register-Operations {
+    $registered = az rest --method get --url $url --query properties.metadata.mcpserverConfigProperties -o tsv 2>$null
+    if ($registered) { return }
+    Write-Host "Registering GitHub issue operations on '$name'..."
+    $entity = az rest --method get --url $url --query properties.metadata.toolEntityId -o tsv
+    $props = az rest --method get --url $url --query properties.metadata.connectionproperties -o tsv
+    Set-Connection $entity $props -Register
+}
+
 try {
     if ((Get-Status) -eq 'Connected') {
-        # Repair a connection created before the operations were registered: it is Connected but has no gateway.
-        $registered = az rest --method get --url $url --query properties.metadata.mcpserverConfigProperties -o tsv 2>$null
-        if (-not $registered) {
-            Write-Host "Connection '$name' is Connected but has no registered operations; registering them..."
-            $entity = az rest --method get --url $url --query properties.metadata.toolEntityId -o tsv
-            $props = az rest --method get --url $url --query properties.metadata.connectionproperties -o tsv
-            Set-Connection $entity $props -Register
-        }
+        # Also repairs a connection that was consented before the operations were registered: it is Connected but
+        # has no connector gateway (target stays https://placeholder) and its trigger never fires.
+        Register-Operations
         Write-Host "Connection '$name' is already Connected."; return
     }
 
@@ -106,11 +114,6 @@ try {
     $connProps = (@{ connectorName = $connector } | ConvertTo-Json -Compress)
     Set-Connection $entityId $connProps
 
-    # Register the issue operations. This is what makes the platform provision the connector gateway and rewrite
-    # the placeholder target; consent can happen before or after it.
-    Write-Host "Registering GitHub issue operations on '$name'..."
-    Set-Connection $entityId $connProps -Register
-
     # 3. Consent link for the signed-in user.
     $oid = az ad signed-in-user show --query id -o tsv
     @{ parameters = @(@{ objectId = $oid; parameterName = 'token'; redirectUrl = 'https://ai.azure.com/nextgen/authConsentPopup'; tenantId = $env:AZURE_TENANT_ID }) } |
@@ -128,11 +131,15 @@ try {
     Write-Host $link
 
     for ($i = 0; $i -lt 60; $i++) {
-        if ((Get-Status) -eq 'Connected') { Write-Host "Connection '$name' is Connected."; return }
+        if ((Get-Status) -eq 'Connected') {
+            Write-Host "Connection '$name' is Connected."
+            Register-Operations
+            return
+        }
         Start-Sleep -Seconds 5
     }
-    # The status only flips to Connected once consent AND the registered operations are both in place. Do not fail
-    # the deployment here; a routine on an unconsented connection is created but its trigger never fires.
+    # Not consented yet. Do not fail the deployment; a routine on an unconsented connection is created but its
+    # trigger never fires. Re-running the hook registers the operations once consent is recorded.
     Write-Warning "Connection '$name' still reports '$(Get-Status)' after 5 minutes. Continuing; if routine creation fails, re-run: azd hooks run postprovision"
 }
 finally {
