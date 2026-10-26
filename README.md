@@ -87,7 +87,7 @@ cd src/stockwatch-agent && dotnet run
 
 | What | Where |
 | --- | --- |
-| Schedule | `cron` / `timeZone` in `routines/stockwatch-daily-review.yaml` |
+| Schedule | `cronExpression` / `timeZone` in `routines/stockwatch-daily-review.yaml` |
 | Model | `infra/main.parameters.json` + `azure.yaml` (`AZURE_AI_MODEL_DEPLOYMENT_NAME`) |
 | Parallelism | env `MAX_PARALLEL_COMPANIES` (default 3) |
 | Report format / analyst prompt | `AnalystResearcher.Instructions`, `ReportComposer` in `Support.cs` |
