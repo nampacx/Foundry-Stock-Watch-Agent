@@ -63,12 +63,11 @@ internal sealed class CompanyStore(TableClient table, string partition)
     }
 }
 
-/// <summary>Stores the consolidated report for later review: one Markdown blob per run.</summary>
+/// <summary>Stores the consolidated report for later review: one Markdown blob per run. The container is created by Bicep.</summary>
 internal sealed class ReportStore(BlobContainerClient container)
 {
     public async Task<Uri> SaveAsync(DateTimeOffset runUtc, string markdown, CancellationToken ct)
     {
-        await container.CreateIfNotExistsAsync(cancellationToken: ct);
         string name = $"{runUtc:yyyy}/{runUtc:MM}/analyst-report-{runUtc:yyyyMMdd-HHmm}Z.md";
         BlobClient blob = container.GetBlobClient(name);
         await blob.UploadAsync(
