@@ -1,15 +1,12 @@
 using GitHubMcp;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 
-builder.Services.AddApplicationInsightsTelemetryWorkerService();
-builder.Services.ConfigureFunctionsApplicationInsights();
-
 // GITHUB_PAT is an app setting (local.settings.json locally; set by infra/resources.bicep in Azure).
+// It is read when the client is first created, not at startup, so a missing value never blocks the host.
 builder.Services.AddHttpClient<GitHubRestClient>(client =>
 {
     string pat = Environment.GetEnvironmentVariable("GITHUB_PAT")
