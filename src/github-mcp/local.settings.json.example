@@ -1,8 +1,0 @@
-{
-  "IsEncrypted": false,
-  "Values": {
-    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
-    "GITHUB_PAT": "<fine-grained PAT, read-only; in Azure this comes from Key Vault>"
-  }
-}

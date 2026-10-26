@@ -11,4 +11,4 @@ COPY --from=build /app/publish .
 EXPOSE 8088
 ENV ASPNETCORE_URLS=http://+:8088
 
-ENTRYPOINT ["dotnet", "TriageAgent.dll"]
+ENTRYPOINT ["dotnet", "AnalystAgent.dll"]

@@ -4,18 +4,14 @@ requiredVersions:
   azd: '>=1.27.1'
   extensions:
     azure.ai.agents: '>=1.0.0-beta.16'
-    azure.ai.connections: '>=1.0.0-beta.10'
-    azure.ai.toolboxes: '>=1.0.0-beta.11'
     azure.ai.routines: '>=1.0.0-beta.10'
-name: foundry-gh-triage-agent
+name: foundry-stock-analyst-agent
 
 services:
-  # Foundry account + project + model deployment. Created by `azd provision`
-  # (infra/main.bicep).
+  # Foundry account + project + model deployment. Created by `azd provision` (infra/main.bicep).
   ai-project:
     host: azure.ai.project
-    # Keep in sync with "deployments" in infra/main.parameters.json (Bicep creates the deployment, this tells
-    # azd/the agent extension which models the project has).
+    # Keep in sync with "deployments" in infra/main.parameters.json.
     deployments:
       - name: gpt-6-luna
         model:
@@ -26,83 +22,39 @@ services:
           name: GlobalStandard
           capacity: 10
 
-  # GitHub REST -> MCP server on Azure Functions (Flex Consumption). Provisioned by infra/main.bicep
-  # (the resource is matched by name through the outputs below), code deployed by `azd deploy`.
-  # Deployed before triage-agent (which `uses` it): the postdeploy hook wires the Foundry connection + toolbox.
-  github-mcp:
-    project: src/github-mcp
-    language: dotnet
-    host: function
-    resourceGroup: ${GITHUB_MCP_RESOURCE_GROUP}
-    resourceName: ${GITHUB_MCP_FUNCTION_NAME}
-    hooks:
-      # Service hooks run from the service folder (src/github-mcp), hence ../../scripts.
-      postdeploy:
-        windows:
-          shell: pwsh
-          run: ../../scripts/register-github-mcp.ps1
-        posix:
-          shell: sh
-          run: ../../scripts/register-github-mcp.sh
-
-  # The hosted triage agent (C#, Microsoft Agent Framework, Responses protocol).
-  triage-agent:
+  # The hosted analyst agent (C#, Microsoft Agent Framework, Responses protocol).
+  analyst-agent:
     host: azure.ai.agent
-    project: src/triage-agent
+    project: src/analyst-agent
     language: docker
     docker:
       remoteBuild: true
     uses:
       - ai-project
-      - github-mcp
     kind: hosted
-    name: triage-agent
-    description: Triages new GitHub issues by reading the repository code through a toolbox backed by our own GitHub REST MCP server (PAT in Key Vault).
+    name: analyst-agent
+    description: Reads the stock watchlist from Table storage, collects the last 24h of analyst information per company and stores one consolidated report in Blob storage.
     protocols:
       - protocol: responses
         version: 2.0.0
     env:
       AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna
-      MODEL_API: responses
-      TOOLBOX_NAME: gh-triage-tools
-      GITHUB_OWNER: nampacx
-      GITHUB_REPOSITORY: Foundry-GH-Triage-Agent
+      STORAGE_ACCOUNT_NAME: ${STORAGE_ACCOUNT_NAME}
+      COMPANIES_TABLE: ${COMPANIES_TABLE}
+      REPORTS_CONTAINER: ${REPORTS_CONTAINER}
     container:
       resources:
         cpu: '0.5'
         memory: 1Gi
 
-  # The routine: GitHub "issue opened" -> triage-agent. Created by `azd deploy` after the agent.
-  # Depends on the "github-conn" connection created by the postprovision hook.
-  on-issue-opened:
+  # The schedule: every weekday morning -> analyst-agent. Created by `azd deploy` after the agent.
+  daily-analyst-review:
     host: azure.ai.routine
     uses:
-      - triage-agent
-    $ref: ./routines/on-issue-opened.yaml
+      - analyst-agent
+    $ref: ./routines/daily-analyst-review.yaml
 
-# One Bicep deployment (infra/main.bicep): a single resource group with the Foundry account/project/model/ACR
-# and the GitHub MCP Function App + Key Vault. `azd down` removes it; add --purge for the soft-deleted vault.
+# One Bicep deployment (infra/main.bicep). `azd down --purge` removes it.
 infra:
   provider: bicep
   path: infra
-
-hooks:
-  postprovision:
-    # 1. Creates the routine's GitHub OAuth connector (one-time consent).
-    - windows:
-        shell: pwsh
-        run: ./scripts/setup-connections.ps1
-        interactive: true
-      posix:
-        shell: sh
-        run: ./scripts/setup-connections.sh
-        interactive: true
-    # 2. Stores the GitHub PAT in Key Vault.
-    - windows:
-        shell: pwsh
-        run: ./scripts/store-github-pat.ps1
-        interactive: true
-      posix:
-        shell: sh
-        run: ./scripts/store-github-pat.sh
-        interactive: true
