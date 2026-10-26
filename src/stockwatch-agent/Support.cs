@@ -110,20 +110,26 @@ internal sealed class AnalystResearcher(IChatClient chatClient, ILogger<AnalystR
         description: "Collects the last 24h of analyst information for one company.",
         tools: [new HostedWebSearchTool()]);
 
-    private const int MaxAttempts = 3;
+    private const int MaxAttempts = 4;
+    private const double BaseDelaySeconds = 15;
+    private const double MaxDelaySeconds = 120;
 
     private static bool IsRateLimit(Exception ex) =>
         ex is ClientResultException { Status: 429 } ||
         ex.Message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) ||
         (ex.InnerException is { } inner && IsRateLimit(inner));
 
-    // Honour Retry-After when the service sends one, otherwise back off 30s, 60s, ...; capped at 2 minutes.
+    // Exponential backoff (15s, 30s, 60s, ... capped at 2 minutes) with "equal jitter": half the delay is fixed, the
+    // other half random, so parallel companies do not retry in lockstep. A Retry-After header from the service is
+    // a floor for the delay.
     private static TimeSpan RetryDelay(Exception ex, int attempt)
     {
+        double backoff = Math.Min(BaseDelaySeconds * Math.Pow(2, attempt - 1), MaxDelaySeconds);
+        double delay = backoff / 2 + Random.Shared.NextDouble() * backoff / 2;
         if (ex is ClientResultException cre && cre.GetRawResponse()?.Headers.TryGetValue("Retry-After", out string? value) == true
-            && int.TryParse(value, out int seconds))
-            return TimeSpan.FromSeconds(Math.Clamp(seconds, 1, 120));
-        return TimeSpan.FromSeconds(Math.Min(30 * attempt, 120));
+            && int.TryParse(value, out int retryAfter))
+            delay = Math.Max(delay, Math.Min(retryAfter, MaxDelaySeconds) + Random.Shared.NextDouble() * 5);
+        return TimeSpan.FromSeconds(delay);
     }
 
     public async Task<CompanyReport> ResearchAsync(Company company, DateTimeOffset nowUtc, CancellationToken ct)
