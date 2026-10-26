@@ -203,6 +203,8 @@ var roles = {
   kvSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
   azureAiUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   storageBlobOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+  storageQueueContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+  storageTableContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 }
 
 resource funcReadsSecret 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -222,6 +224,27 @@ resource funcUsesStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     principalId: func.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageBlobOwner)
+  }
+}
+
+// The host writes startup diagnostics to Table storage and some extensions use queues, both through AzureWebJobsStorage.
+resource funcUsesStorageTables 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, func.id, roles.storageTableContributor)
+  properties: {
+    principalId: func.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageTableContributor)
+  }
+}
+
+resource funcUsesStorageQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, func.id, roles.storageQueueContributor)
+  properties: {
+    principalId: func.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageQueueContributor)
   }
 }
 
