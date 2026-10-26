@@ -13,7 +13,7 @@ using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
-using AnalystAgent;
+using StockWatchAgent;
 
 // Local development only; in Foundry the platform injects the environment.
 Env.NoClobber().TraversePath().Load();
@@ -21,9 +21,9 @@ Env.NoClobber().TraversePath().Load();
 string projectEndpoint = Config.Required("FOUNDRY_PROJECT_ENDPOINT");
 string deployment = Config.Required("AZURE_AI_MODEL_DEPLOYMENT_NAME");
 string storageAccount = Config.Required("STORAGE_ACCOUNT_NAME");
-string tableName = Config.Optional("COMPANIES_TABLE", "companies")!;
-string partition = Config.Optional("COMPANIES_PARTITION", "watchlist")!;
-string reportsContainer = Config.Optional("REPORTS_CONTAINER", "analyst-reports")!;
+string tableName = Config.Optional("WATCHLIST_TABLE", "watchlist")!;
+string partition = Config.Optional("WATCHLIST_PARTITION", "stocks")!;
+string reportsContainer = Config.Optional("REPORTS_CONTAINER", "stockwatch-reports")!;
 int maxParallel = int.Parse(Config.Optional("MAX_PARALLEL_COMPANIES", "3")!);
 
 // The platform-provided identity in Foundry; developer credentials locally.
@@ -43,16 +43,16 @@ var runner = new ReviewRunner(companies, new AnalystResearcher(chatClient), repo
 
 AIFunction reviewTool = AIFunctionFactory.Create(
     runner.RunAsync,
-    name: "run_daily_analyst_review",
+    name: "run_stock_watch",
     description: "Runs the complete daily analyst review: loads the watchlist, researches the last 24h of analyst " +
                  "information for every company, and saves one consolidated report to blob storage. Returns a status line with the report location.");
 
 AIAgent agent = chatClient.AsAIAgent(
     instructions: """
-        You run the user's daily stock-watch job. For every request, call run_daily_analyst_review exactly once,
+        You run the user's daily stock-watch job. For every request, call run_stock_watch exactly once,
         then reply with its status line and nothing else. If the tool fails, report the error; do not retry.
         """,
-    name: "analyst-agent",
+    name: "stockwatch-agent",
     description: "Daily analyst-information review for the user's stock watchlist.",
     tools: [reviewTool]);
 

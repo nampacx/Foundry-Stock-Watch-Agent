@@ -5,7 +5,7 @@ using Azure.Storage.Blobs.Models;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace AnalystAgent;
+namespace StockWatchAgent;
 
 internal static class Config
 {
@@ -25,7 +25,7 @@ internal sealed record Company(string Ticker, string Name, string? Exchange);
 internal sealed record CompanyReport(Company Company, string Markdown, bool Failed);
 
 /// <summary>
-/// Watchlist in Azure Table storage: PartitionKey = "watchlist" (configurable), RowKey = ticker, columns
+/// Watchlist in Azure Table storage: PartitionKey = "stocks" (configurable), RowKey = ticker, columns
 /// Name, Exchange (optional) and Active (optional bool, default true).
 /// </summary>
 internal sealed class CompanyStore(TableClient table, string partition)

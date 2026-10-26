@@ -1,5 +1,5 @@
 // Everything in one resource group: Foundry (account, project, model deployments, ACR), a Storage account
-// (Table 'companies' = watchlist, Blob container 'analyst-reports' = consolidated reports) and Application Insights.
+// (Table 'watchlist', Blob container 'stockwatch-reports' = consolidated reports) and Application Insights.
 targetScope = 'resourceGroup'
 
 param location string
@@ -15,20 +15,20 @@ param userPrincipalId string = ''
 param userPrincipalType string = 'User'
 
 @description('Table holding the watchlist.')
-param companiesTable string = 'companies'
+param watchlistTable string = 'watchlist'
 @description('Blob container receiving the consolidated reports.')
-param reportsContainer string = 'analyst-reports'
+param reportsContainer string = 'stockwatch-reports'
 
 // Same formula the former Foundry layer used, so existing Foundry resource names are kept.
 var foundryToken = empty(resourceTokenSalt)
   ? uniqueString(subscription().id, resourceGroup().id, location)
   : uniqueString(subscription().id, resourceGroup().id, location, resourceTokenSalt)
-var foundryAccountName = 'cog-${foundryToken}'
-var acrName = 'cr${foundryToken}'
+var foundryAccountName = 'aif-stockwatch-${foundryToken}'
+var acrName = 'crstockwatch${foundryToken}'
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
-var storageName = 'stanalyst${take(resourceToken, 10)}'
-var monitorName = 'analyst-${take(resourceToken, 8)}'
+var storageName = 'ststockwatch${take(resourceToken, 10)}'
+var monitorName = 'stockwatch-${take(resourceToken, 8)}'
 
 // --- Foundry ---
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
@@ -138,8 +138,8 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
   resource table 'tableServices' = {
     name: 'default'
-    resource companies 'tables' = {
-      name: companiesTable
+    resource watchlist 'tables' = {
+      name: watchlistTable
     }
   }
 }
@@ -236,7 +236,7 @@ resource userAzureAiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }
 
 output STORAGE_ACCOUNT_NAME string = storage.name
-output COMPANIES_TABLE string = companiesTable
+output WATCHLIST_TABLE string = watchlistTable
 output REPORTS_CONTAINER string = reportsContainer
 
 output AZURE_AI_PROJECT_ID string = foundryAccount::project.id

@@ -5,7 +5,7 @@ requiredVersions:
   extensions:
     azure.ai.agents: '>=1.0.0-beta.16'
     azure.ai.routines: '>=1.0.0-beta.10'
-name: foundry-stock-analyst-agent
+name: stock-watch
 
 services:
   # Foundry account + project + model deployment. Created by `azd provision` (infra/main.bicep).
@@ -23,16 +23,16 @@ services:
           capacity: 10
 
   # The hosted analyst agent (C#, Microsoft Agent Framework, Responses protocol).
-  analyst-agent:
+  stockwatch-agent:
     host: azure.ai.agent
-    project: src/analyst-agent
+    project: src/stockwatch-agent
     language: docker
     docker:
       remoteBuild: true
     uses:
       - ai-project
     kind: hosted
-    name: analyst-agent
+    name: stockwatch-agent
     description: Reads the stock watchlist from Table storage, collects the last 24h of analyst information per company and stores one consolidated report in Blob storage.
     protocols:
       - protocol: responses
@@ -40,19 +40,19 @@ services:
     env:
       AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-6-luna
       STORAGE_ACCOUNT_NAME: ${STORAGE_ACCOUNT_NAME}
-      COMPANIES_TABLE: ${COMPANIES_TABLE}
+      WATCHLIST_TABLE: ${WATCHLIST_TABLE}
       REPORTS_CONTAINER: ${REPORTS_CONTAINER}
     container:
       resources:
         cpu: '0.5'
         memory: 1Gi
 
-  # The schedule: every weekday morning -> analyst-agent. Created by `azd deploy` after the agent.
-  daily-analyst-review:
+  # The schedule: every weekday morning -> stockwatch-agent. Created by `azd deploy` after the agent.
+  stockwatch-daily-review:
     host: azure.ai.routine
     uses:
-      - analyst-agent
-    $ref: ./routines/daily-analyst-review.yaml
+      - stockwatch-agent
+    $ref: ./routines/stockwatch-daily-review.yaml
 
 # One Bicep deployment (infra/main.bicep). `azd down --purge` removes it.
 infra:

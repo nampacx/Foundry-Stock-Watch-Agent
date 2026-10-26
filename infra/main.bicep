@@ -28,7 +28,7 @@ param principalType string = 'User'
 @description('Optional salt to vary resource names across re-provisions.')
 param resourceTokenSalt string = ''
 
-var tags = { 'azd-env-name': environmentName }
+var tags = { 'azd-env-name': environmentName, workload: 'stock-watch' }
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
@@ -62,5 +62,5 @@ output AZURE_CONTAINER_REGISTRY_ENDPOINT string = resources.outputs.AZURE_CONTAI
 output AZURE_CONTAINER_REGISTRY_RESOURCE_ID string = resources.outputs.AZURE_CONTAINER_REGISTRY_RESOURCE_ID
 output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = resources.outputs.AZURE_AI_PROJECT_ACR_CONNECTION_NAME
 output STORAGE_ACCOUNT_NAME string = resources.outputs.STORAGE_ACCOUNT_NAME
-output COMPANIES_TABLE string = resources.outputs.COMPANIES_TABLE
+output WATCHLIST_TABLE string = resources.outputs.WATCHLIST_TABLE
 output REPORTS_CONTAINER string = resources.outputs.REPORTS_CONTAINER

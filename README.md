@@ -1,4 +1,4 @@
-# Foundry stock analyst agent
+# Stock Watch: daily analyst review agent
 
 A scheduled **Microsoft Foundry routine** wakes a **hosted agent** (C#, Microsoft Agent Framework) every weekday morning. The agent
 
@@ -7,33 +7,33 @@ A scheduled **Microsoft Foundry routine** wakes a **hosted agent** (C#, Microsof
 3. consolidates everything into **one Markdown report** and stores it in **Blob storage** for later review.
 
 ```
-Foundry routine "daily-analyst-review" (cron, weekdays 07:00 Europe/Berlin)
+Foundry routine "stockwatch-daily-review" (cron, weekdays 07:00 Europe/Berlin)
       │  Responses API
       ▼
-hosted agent "analyst-agent"  ── tool: run_daily_analyst_review ──┐
+hosted agent "stockwatch-agent"  ── tool: run_stock_watch ──┐
                                                                    │ (deterministic C# job)
   Table "companies" ──▶ for each company (max 3 in parallel):      │
                          inner agent + web search ─▶ company report │
                                                                    ▼
-                          consolidated report ─▶ Blob  analyst-reports/yyyy/MM/analyst-report-yyyyMMdd-HHmmZ.md
+                          consolidated report ─▶ Blob  stockwatch-reports/yyyy/MM/analyst-report-yyyyMMdd-HHmmZ.md
 ```
 
-The orchestration is plain C# (`ReviewRunner` in `src/analyst-agent/Support.cs`), exposed to the hosted agent as a single tool, so the run does not depend on the model remembering to loop over every company. One failing company is recorded in the report and does not stop the others.
+The orchestration is plain C# (`ReviewRunner` in `src/stockwatch-agent/Support.cs`), exposed to the hosted agent as a single tool, so the run does not depend on the model remembering to loop over every company. One failing company is recorded in the report and does not stop the others.
 
 | Piece | Where |
 | --- | --- |
 | Foundry account, project, model, ACR, Storage (table + container), App Insights, RBAC | `infra/main.bicep`, `infra/resources.bicep` |
-| Hosted agent | `src/analyst-agent` |
-| Schedule | `routines/daily-analyst-review.yaml` (azd service `daily-analyst-review`) |
+| Hosted agent | `src/stockwatch-agent` |
+| Schedule | `routines/stockwatch-daily-review.yaml` (azd service `stockwatch-daily-review`) |
 | Watchlist seeding | `scripts/seed-watchlist.ps1`, `watchlist.example.csv` |
 
 ## Watchlist table
 
-Table `companies`, one row per company:
+Table `watchlist`, one row per company:
 
 | Column | Meaning |
 | --- | --- |
-| `PartitionKey` | `watchlist` |
+| `PartitionKey` | `stocks` |
 | `RowKey` | ticker, e.g. `MSFT` |
 | `Name` | company name (falls back to the ticker) |
 | `Exchange` | optional, helps disambiguate tickers |
@@ -71,23 +71,23 @@ azd up
 Run the job right away instead of waiting for the schedule:
 
 ```bash
-azd ai routine dispatch daily-analyst-review
-azd ai routine run list daily-analyst-review
+azd ai routine dispatch stockwatch-daily-review
+azd ai routine run list stockwatch-daily-review
 ```
 
-Then open the newest blob in container `analyst-reports` (portal → Storage account → Containers, or `az storage blob list --auth-mode login --account-name <STORAGE_ACCOUNT_NAME> -c analyst-reports -o table`).
+Then open the newest blob in container `stockwatch-reports` (portal → Storage account → Containers, or `az storage blob list --auth-mode login --account-name <STORAGE_ACCOUNT_NAME> -c stockwatch-reports -o table`).
 
-Locally against the deployed project (needs `az login`, a `.env` based on `src/analyst-agent/.env.example`):
+Locally against the deployed project (needs `az login`, a `.env` based on `src/stockwatch-agent/.env.example`):
 
 ```bash
-cd src/analyst-agent && dotnet run
+cd src/stockwatch-agent && dotnet run
 ```
 
 ## Configuration
 
 | What | Where |
 | --- | --- |
-| Schedule | `cron` / `timeZone` in `routines/daily-analyst-review.yaml` |
+| Schedule | `cron` / `timeZone` in `routines/stockwatch-daily-review.yaml` |
 | Model | `infra/main.parameters.json` + `azure.yaml` (`AZURE_AI_MODEL_DEPLOYMENT_NAME`) |
 | Parallelism | env `MAX_PARALLEL_COMPANIES` (default 3) |
 | Report format / analyst prompt | `AnalystResearcher.Instructions`, `ReportComposer` in `Support.cs` |
